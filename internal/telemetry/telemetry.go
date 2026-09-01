@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,7 +28,7 @@ type Metrics struct {
 	DownstreamDuration *prometheus.HistogramVec
 }
 
-func New(pool *pgxpool.Pool, resultInlineBytes int64) *Metrics {
+func New(pool *pgxpool.Pool, resultInlineBytes int64, logger *slog.Logger) *Metrics {
 	registry := prometheus.NewRegistry()
 
 	m := &Metrics{
@@ -54,7 +55,7 @@ func New(pool *pgxpool.Pool, resultInlineBytes int64) *Metrics {
 			"Downstream call latency by disposition.", "disposition"),
 	}
 
-	registry.MustRegister(&databaseCollector{pool: pool})
+	registry.MustRegister(&databaseCollector{pool: pool, logger: logger})
 	m.resultInlineBytes = resultInlineBytes
 	return m
 }
@@ -111,7 +112,8 @@ var (
 )
 
 type databaseCollector struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	logger *slog.Logger
 }
 
 func (c *databaseCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -132,7 +134,9 @@ func (c *databaseCollector) Collect(ch chan<- prometheus.Metric) {
 		  FROM idempotency_keys`
 
 	var indeterminate, pending, oldest float64
-	if err := c.pool.QueryRow(ctx, counts).Scan(&indeterminate, &pending, &oldest); err == nil {
+	if err := c.pool.QueryRow(ctx, counts).Scan(&indeterminate, &pending, &oldest); err != nil {
+		c.logger.Error("correctness gauges unavailable this scrape", "error", err)
+	} else {
 		ch <- prometheus.MustNewConstMetric(indeterminateKeys, prometheus.GaugeValue, indeterminate)
 		ch <- prometheus.MustNewConstMetric(pendingKeys, prometheus.GaugeValue, pending)
 		ch <- prometheus.MustNewConstMetric(oldestPendingAge, prometheus.GaugeValue, oldest)
@@ -147,6 +151,7 @@ func (c *databaseCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, table := range []string{"write_intents", "conflicts", "payload_access_audit"} {
 		var latest time.Time
 		if err := c.pool.QueryRow(ctx, headroom, table).Scan(&latest); err != nil {
+			c.logger.Error("partition headroom unavailable this scrape", "table", table, "error", err)
 			continue
 		}
 		ch <- prometheus.MustNewConstMetric(partitionHeadroom, prometheus.GaugeValue,

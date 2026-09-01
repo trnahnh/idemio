@@ -46,7 +46,7 @@ func quietLogger() *slog.Logger {
 }
 
 func metricsFor(pool *pgxpool.Pool) *telemetry.Metrics {
-	return telemetry.New(pool, 65536)
+	return telemetry.New(pool, 65536, quietLogger())
 }
 
 func claimPending(t *testing.T, pool *pgxpool.Pool, resourceType string) {

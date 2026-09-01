@@ -61,7 +61,7 @@ func run() error {
 	server := &http.Server{
 		Handler: api.New(cfg, pool,
 			downstream.New(cfg.DownstreamBaseURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout),
-			telemetry.New(pool, cfg.ResultInlineBytes),
+			telemetry.New(pool, cfg.ResultInlineBytes, logger),
 			logger,
 		).Routes(),
 	}

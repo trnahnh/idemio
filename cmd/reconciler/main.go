@@ -47,7 +47,7 @@ func run() error {
 		return err
 	}
 
-	metrics := telemetry.New(pool, cfg.ResultInlineBytes)
+	metrics := telemetry.New(pool, cfg.ResultInlineBytes, logger)
 	go serveMetrics(cfg.MetricsAddr, metrics, logger)
 
 	prober := probe.New(cfg.DownstreamBaseURL, cfg.DownstreamTimeout)

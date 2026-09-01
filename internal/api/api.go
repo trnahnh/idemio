@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -90,7 +91,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := r.Header.Get(headerIdempotencyKey)
+	key := strings.ToLower(r.Header.Get(headerIdempotencyKey))
 	if !isUUID(key) {
 		writeProblem(w, http.StatusUnprocessableEntity, key, "malformed_idempotency_key",
 			"Idempotency-Key must be a UUID.")
@@ -299,7 +300,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := r.PathValue("key")
+	key := strings.ToLower(r.PathValue("key"))
 	if !isUUID(key) {
 		writeProblem(w, http.StatusUnprocessableEntity, key, "malformed_idempotency_key", "")
 		return

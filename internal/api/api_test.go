@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -490,5 +491,25 @@ func TestClaimCollisionsAndReplaysAreCounted(t *testing.T) {
 		if !strings.Contains(scraped, want) {
 			t.Errorf("metrics do not contain %q", want)
 		}
+	}
+}
+
+func TestKeyCasingDoesNotSplitTheCorrelationId(t *testing.T) {
+	h := newHarness(t, 3*time.Second)
+
+	upper := strings.ToUpper(keyA)
+	h.write(t, agentID, upper, `{"amount_cents":4200}`).Body.Close()
+
+	var stored string
+	err := h.pool.QueryRow(context.Background(),
+		"SELECT idempotency_key::text FROM idempotency_keys").Scan(&stored)
+	if err != nil {
+		t.Fatalf("read stored key: %v", err)
+	}
+
+	if got := len(h.fake.Executions(t, correlation.ID(agentID, stored))); got != 1 {
+		t.Fatalf("the reconciler would find %d executions under the stored key, want 1: "+
+			"a probe that finds none marks the key failed, which is re-claimable, "+
+			"which executes the write a second time", got)
 	}
 }

@@ -33,6 +33,14 @@ var (
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
+	pool, _ := NewWithURL(t)
+	return pool
+}
+
+// NewWithURL also yields the connection string, for tests that spawn a binary.
+func NewWithURL(t *testing.T) (*pgxpool.Pool, string) {
+	t.Helper()
+
 	adminURL := requireURL(t)
 	template := ensureTemplate(t, adminURL)
 
@@ -45,7 +53,8 @@ func New(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("clone template into %s: %v", name, err)
 	}
 
-	pool := connect(t, withDatabase(t, adminURL, name))
+	dsn := withDatabase(t, adminURL, name)
+	pool := connect(t, dsn)
 	t.Cleanup(func() {
 		pool.Close()
 		dropper := connect(t, adminURL)
@@ -55,7 +64,7 @@ func New(t *testing.T) *pgxpool.Pool {
 			t.Logf("drop %s: %v", name, err)
 		}
 	})
-	return pool
+	return pool, dsn
 }
 
 // Truncate empties every data table, leaving the schema in place.

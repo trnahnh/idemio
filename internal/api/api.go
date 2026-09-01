@@ -23,6 +23,7 @@ import (
 const (
 	headerIdempotencyKey = "Idempotency-Key"
 	retryAfter           = time.Second
+	pendingPollFloor     = 20 * time.Millisecond
 )
 
 type Server struct {
@@ -165,7 +166,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnprocessableEntity, key, "request_hash_mismatch",
 			"This key was previously used with a different request body.")
 	case claim.VerdictExisting:
-		s.writeExisting(w, key, result.Record)
+		s.writeExisting(w, key, s.awaitCompletion(r.Context(), result.Record))
 	default:
 		if result.Record.AttemptCount > 1 {
 			s.metrics.Reclaims.Inc()
@@ -257,6 +258,35 @@ func (s *Server) persistOutcome(ctx context.Context, agentID, key string,
 		}
 	}
 	return false
+}
+
+func (s *Server) awaitCompletion(ctx context.Context, record claim.Record) claim.Record {
+	if record.Status != claim.StatusPending || s.cfg.ClaimPendingWait <= 0 {
+		return record
+	}
+
+	deadline := time.Now().Add(s.cfg.ClaimPendingWait)
+	interval := s.cfg.ClaimPendingWait / 20
+	if interval < pendingPollFloor {
+		interval = pendingPollFloor
+	}
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return record
+		case <-time.After(interval):
+		}
+
+		current, found, err := claim.Lookup(ctx, s.pool, record.AgentID, record.Key)
+		if err != nil || !found {
+			return record
+		}
+		if current.Status != claim.StatusPending {
+			return current
+		}
+	}
+	return record
 }
 
 func (s *Server) writeExisting(w http.ResponseWriter, key string, record claim.Record) {

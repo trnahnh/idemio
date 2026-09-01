@@ -42,6 +42,12 @@ type harness struct {
 func newHarness(t *testing.T, downstreamTimeout time.Duration) *harness {
 	t.Helper()
 
+	return newHarnessWith(t, downstreamTimeout, 0)
+}
+
+func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) *harness {
+	t.Helper()
+
 	pool := testdb.New(t)
 	fake := faketest.Start(t)
 
@@ -50,6 +56,7 @@ func newHarness(t *testing.T, downstreamTimeout time.Duration) *harness {
 		DownstreamBaseURL:        fake.DataURL,
 		DownstreamConnectTimeout: 300 * time.Millisecond,
 		DownstreamTimeout:        downstreamTimeout,
+		ClaimPendingWait:         pendingWait,
 		ReconcileStaleAfter:      10 * time.Second,
 		ReconcileInterval:        time.Second,
 		PayloadBytes:             1024,
@@ -59,7 +66,7 @@ func newHarness(t *testing.T, downstreamTimeout time.Duration) *harness {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	client := downstream.New(fake.DataURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout)
-	metrics := telemetry.New(pool, cfg.ResultInlineBytes)
+	metrics := telemetry.New(pool, cfg.ResultInlineBytes, logger)
 	server := httptest.NewServer(api.New(cfg, pool, client, metrics, logger).Routes())
 	t.Cleanup(server.Close)
 
@@ -569,5 +576,65 @@ func TestClientDisconnectDoesNotAbandonTheWrite(t *testing.T) {
 	}
 	if got := h.executions(t, agentID, keyA); got != 1 {
 		t.Fatalf("downstream executed %d times, want 1", got)
+	}
+}
+
+func TestPendingWaitLetsTheRaceLoserSeeTheResult(t *testing.T) {
+	h := newHarnessWith(t, 3*time.Second, 2*time.Second)
+	h.fake.Script(t, resourceID, "slow")
+
+	statuses := make([]int, 2)
+	var group sync.WaitGroup
+	for i := range statuses {
+		group.Go(func() {
+			resp := h.write(t, agentID, keyA, `{"amount_cents":4200}`)
+			statuses[i] = resp.StatusCode
+			resp.Body.Close()
+		})
+	}
+	group.Wait()
+
+	created, replayed := 0, 0
+	for _, status := range statuses {
+		switch status {
+		case http.StatusCreated:
+			created++
+		case http.StatusOK:
+			replayed++
+		default:
+			t.Errorf("status = %d, want 201 or 200: the loser should have waited", status)
+		}
+	}
+	if created != 1 || replayed != 1 {
+		t.Errorf("created=%d replayed=%d, want 1 and 1", created, replayed)
+	}
+	if got := h.executions(t, agentID, keyA); got != 1 {
+		t.Fatalf("downstream executed %d times, want 1", got)
+	}
+}
+
+func TestZeroPendingWaitReturnsAcceptedImmediately(t *testing.T) {
+	h := newHarness(t, 3*time.Second)
+	h.fake.Script(t, resourceID, "slow")
+
+	statuses := make([]int, 2)
+	var group sync.WaitGroup
+	for i := range statuses {
+		group.Go(func() {
+			resp := h.write(t, agentID, keyA, `{"amount_cents":4200}`)
+			statuses[i] = resp.StatusCode
+			resp.Body.Close()
+		})
+	}
+	group.Wait()
+
+	accepted := 0
+	for _, status := range statuses {
+		if status == http.StatusAccepted {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("statuses = %v, want one 202 when the wait is disabled", statuses)
 	}
 }

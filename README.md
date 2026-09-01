@@ -48,11 +48,12 @@ Start at [`docs/`](docs/README.md).
 | [OPEN_QUESTIONS](docs/OPEN_QUESTIONS.md) | What is still undecided, and what would decide it |
 | [decisions/](docs/decisions/) | Why the design is the way it is |
 
-[`PRD.md`](PRD.md) is **frozen**. It records the original intent; `docs/` supersedes it.
-Review found several contradictions in it — the intent log was specified as both a Kafka
-topic and a Postgres table, reconciliation would have re-executed writes of unknown
-outcome, and the schema could not satisfy its own retention target. Each was resolved as a
-dated ADR rather than edited away, so the reasoning stays reviewable.
+The original PRD is frozen and kept outside version control; `docs/` supersedes it. Review
+found several contradictions in it — the intent log was specified as both a Kafka topic and
+a Postgres table, reconciliation would have re-executed writes of unknown outcome, and the
+schema could not satisfy its own retention target. Each was resolved as a dated ADR rather
+than edited away, so the reasoning stays reviewable in
+[decisions/](docs/decisions/).
 
 ## License
 

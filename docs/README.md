@@ -4,10 +4,10 @@ This folder is the living specification for the idempotent transaction layer.
 
 ## How these documents relate
 
-[`../PRD.md`](../PRD.md) is **frozen at v1.0**. It records the original intent and is
-never edited. Everything in this folder derives from it and supersedes it where they
-disagree. When you need to know *why* the system exists, read the PRD. When you need
-to know *what it does today*, read here.
+The original PRD is **frozen at v1.0** and kept outside version control. It records the
+original intent and is never edited. Everything in this folder derives from it and
+supersedes it where they disagree. This folder is the answer to what the system does
+today.
 
 The PRD contained several internal contradictions and unresolved gaps. Those were not
 edited away — each was settled as a dated [Architecture Decision Record](decisions/),

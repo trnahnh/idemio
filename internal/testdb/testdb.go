@@ -65,6 +65,33 @@ func NewWithURL(t *testing.T) (*pgxpool.Pool, string) {
 	return pool, dsn
 }
 
+func NewEmpty(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	adminURL := requireURL(t)
+	name := "idemio_e_" + randomSuffix(t)
+
+	admin := connect(t, adminURL)
+	defer admin.Close()
+
+	stmt := fmt.Sprintf("CREATE DATABASE %s", name)
+	if _, err := admin.Exec(context.Background(), stmt); err != nil {
+		t.Fatalf("create %s: %v", name, err)
+	}
+
+	pool := connect(t, withDatabase(t, adminURL, name))
+	t.Cleanup(func() {
+		pool.Close()
+		dropper := connect(t, adminURL)
+		defer dropper.Close()
+		drop := fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", name)
+		if _, err := dropper.Exec(context.Background(), drop); err != nil {
+			t.Logf("drop %s: %v", name, err)
+		}
+	})
+	return pool
+}
+
 func Truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 

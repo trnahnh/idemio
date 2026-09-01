@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/trnahnh/idemio/internal/store"
@@ -98,5 +99,38 @@ func TestPartitionCounts(t *testing.T) {
 		if got != want {
 			t.Errorf("%s partitions = %d, want %d", table, got, want)
 		}
+	}
+}
+
+func TestConcurrentMigrationsOnAFreshDatabase(t *testing.T) {
+	pool := testdb.NewEmpty(t)
+	ctx := context.Background()
+
+	const racers = 6
+	errs := make([]error, racers)
+
+	var group sync.WaitGroup
+	for i := range racers {
+		group.Go(func() {
+			errs[i] = store.Migrate(ctx, pool)
+		})
+	}
+	group.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("racer %d: %v", i, err)
+		}
+	}
+
+	var applied int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
+		t.Fatalf("count schema_migrations: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("schema_migrations rows = %d, want 1", applied)
+	}
+	if err := store.VerifyUniqueConstraint(ctx, pool); err != nil {
+		t.Fatalf("schema after concurrent migration: %v", err)
 	}
 }

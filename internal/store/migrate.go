@@ -12,6 +12,8 @@ import (
 	"github.com/trnahnh/idemio/migrations"
 )
 
+const migrationLockKey int64 = 5470921883114001
+
 const ledgerDDL = `CREATE TABLE IF NOT EXISTS schema_migrations (
     version    TEXT        PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -23,11 +25,22 @@ type migration struct {
 }
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, ledgerDDL); err != nil {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLockKey)
+
+	if _, err := conn.Exec(ctx, ledgerDDL); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	applied, err := appliedVersions(ctx, pool)
+	applied, err := appliedVersions(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -38,15 +51,15 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 
 	for _, m := range pending {
-		if err := apply(ctx, pool, m); err != nil {
+		if err := apply(ctx, conn, m); err != nil {
 			return fmt.Errorf("apply %s: %w", m.version, err)
 		}
 	}
 	return nil
 }
 
-func appliedVersions(ctx context.Context, pool *pgxpool.Pool) (map[string]struct{}, error) {
-	rows, err := pool.Query(ctx, "SELECT version FROM schema_migrations")
+func appliedVersions(ctx context.Context, conn *pgxpool.Conn) (map[string]struct{}, error) {
+	rows, err := conn.Query(ctx, "SELECT version FROM schema_migrations")
 	if err != nil {
 		return nil, fmt.Errorf("read schema_migrations: %w", err)
 	}
@@ -88,8 +101,8 @@ func pendingMigrations(applied map[string]struct{}) ([]migration, error) {
 	return pending, nil
 }
 
-func apply(ctx context.Context, pool *pgxpool.Pool, m migration) error {
-	tx, err := pool.Begin(ctx)
+func apply(ctx context.Context, conn *pgxpool.Conn, m migration) error {
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}

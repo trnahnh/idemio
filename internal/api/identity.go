@@ -17,8 +17,6 @@ type identity struct {
 	Role    string
 }
 
-// Callers are authenticated upstream; this layer verifies the claims it is handed.
-// The only Phase 0 source is a gateway-set header, and IDEMIO_AUTH_MODE must opt into it.
 func readIdentity(r *http.Request) (identity, bool) {
 	agentID := strings.TrimSpace(r.Header.Get(HeaderAgentID))
 	role := strings.TrimSpace(r.Header.Get(HeaderRole))

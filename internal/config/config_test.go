@@ -31,7 +31,6 @@ func TestDocumentedDefaultsAreValid(t *testing.T) {
 	}
 }
 
-// The misconfiguration DEPLOYMENT_CHECKLIST calls the most dangerous in the system.
 func TestStaleAfterBelowCallBudgetRefusesToBoot(t *testing.T) {
 	cfg := valid()
 	cfg.ReconcileStaleAfter = 20 * time.Second

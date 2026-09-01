@@ -110,8 +110,6 @@ var (
 		[]string{"table"}, nil)
 )
 
-// Gauges read live state rather than being incremented, so a restart cannot lose them and
-// two replicas cannot double-count.
 type databaseCollector struct {
 	pool *pgxpool.Pool
 }

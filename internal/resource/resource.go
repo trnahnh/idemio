@@ -1,7 +1,5 @@
 package resource
 
-// Phase 0 carries one entry in code. The Phase 1 operation manifest replaces this behind
-// the same lookup, so call sites do not change: ADR-0007, ADR-0012.
 type Definition struct {
 	Type       string
 	Operations map[string]string

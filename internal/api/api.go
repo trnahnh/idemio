@@ -229,9 +229,6 @@ func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req
 	}
 }
 
-// The result is in hand here and the reconciler could only re-derive it through a probe, so
-// a database blip is worth retrying before surrendering the key: ADR-0012. The context is
-// detached because a client disconnect must not abandon a write that already executed.
 func (s *Server) persistOutcome(ctx context.Context, agentID, key string,
 	status claim.Status, outcome downstream.Outcome) bool {
 
@@ -314,7 +311,6 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, key, "lookup_failed", "")
 		return
 	}
-	// A key owned by another agent is indistinguishable from one that does not exist.
 	if !found {
 		writeProblem(w, http.StatusNotFound, key, "unknown_key", "")
 		return

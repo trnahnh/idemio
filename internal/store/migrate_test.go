@@ -25,7 +25,6 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 }
 
-// DEPLOYMENT_CHECKLIST requires this be verified in the live database, not the migration file.
 func TestLiveUniqueConstraintIsExactlyAgentAndKey(t *testing.T) {
 	pool := testdb.New(t)
 

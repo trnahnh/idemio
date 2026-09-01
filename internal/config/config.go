@@ -63,9 +63,6 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// These relations are refuse-to-boot rather than warnings: ADR-0012. The dangerous one is
-// stale_after, which below the call budget turns healthy in-flight writes into terminal
-// indeterminate records.
 func (c Config) Validate() error {
 	var problems []string
 	fail := func(format string, args ...any) {

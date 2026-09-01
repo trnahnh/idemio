@@ -23,12 +23,6 @@ import (
 	"github.com/trnahnh/idemio/internal/testdb"
 )
 
-// ROADMAP exit criterion 2, the gate it calls the one that matters most: kill the replica
-// mid-downstream-call and prove the write is never executed twice. Verified against the
-// downstream's ledger, never against idemio's own record.
-//
-// Process.Kill maps to TerminateProcess on Windows, which is as uncatchable and unmaskable
-// as SIGKILL, so this is faithful on both platforms with no OS-specific code.
 func TestKillMidCallNeverProducesASecondExecution(t *testing.T) {
 	pool, databaseURL := testdb.NewWithURL(t)
 	fake := faketest.Start(t)
@@ -150,8 +144,6 @@ func writeTo(t *testing.T, address string) {
 	resp.Body.Close()
 }
 
-// Waiting on the downstream's ledger rather than on a timer: the kill has to land while the
-// call is genuinely in flight, or the test proves nothing.
 func waitForDownstreamCall(t *testing.T, fake *faketest.Fake, correlationID string) {
 	t.Helper()
 

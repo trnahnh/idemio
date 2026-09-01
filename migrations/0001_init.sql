@@ -111,7 +111,6 @@ BEGIN
     END LOOP;
 END $$;
 
--- No DEFAULT partition on any range table, deliberately: ADR-0012.
 DO $$
 DECLARE
     week_start TIMESTAMPTZ := date_trunc('week', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC';

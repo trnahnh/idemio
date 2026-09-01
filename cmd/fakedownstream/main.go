@@ -10,9 +10,6 @@ import (
 	"sync"
 )
 
-// A real ECONNREFUSED is the only downstream failure that proves nothing executed, and it
-// requires nothing listening. Hence a data listener that can be closed and rebound on the
-// same port, while the control listener stays reachable: ADR-0012.
 type switchableListener struct {
 	mu      sync.Mutex
 	addr    string

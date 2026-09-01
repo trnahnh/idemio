@@ -52,7 +52,6 @@ func TestFirstClaimWinsAndSecondSeesPending(t *testing.T) {
 	}
 }
 
-// The database-level half of exit criterion 1. The downstream-verified half lives with the API.
 func TestConcurrentClaimsProduceExactlyOneWinner(t *testing.T) {
 	pool := testdb.New(t)
 

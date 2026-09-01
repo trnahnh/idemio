@@ -53,8 +53,6 @@ type Result struct {
 	Verdict  Verdict
 	Record   Record
 	IntentID string
-	// Collided records that the claim insert hit an existing row, which is the ADR-0010
-	// routing trigger regardless of how the collision was then resolved.
 	Collided bool
 }
 
@@ -84,8 +82,6 @@ const insertIntent = `
 	VALUES ($1, $2::uuid, $3, $4, $5, $6::operation_class, $7)
 	RETURNING intent_id`
 
-// The claim commits before any downstream call and is never held open across one. The
-// unique constraint on (agent_id, idempotency_key) is the at-most-once guarantee itself.
 func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -211,8 +207,6 @@ func readRecord(ctx context.Context, q interface {
 	return record, nil
 }
 
-// Lookup backs GET /v1/writes/{key}. Scoped to the agent so a key belonging to another
-// agent is indistinguishable from one that does not exist.
 func Lookup(ctx context.Context, pool *pgxpool.Pool, agentID, key string) (Record, bool, error) {
 	record, err := readRecord(ctx, pool, agentID, key)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -229,8 +223,6 @@ const completeKey = `
 	   SET status = $3::key_status, result = $4, outcome_detail = $5, completed_at = now()
 	 WHERE agent_id = $1 AND idempotency_key = $2::uuid AND status = 'pending'`
 
-// Complete is guarded on status = 'pending' so a terminal outcome is never overwritten,
-// including by a late writer racing the reconciler.
 func Complete(ctx context.Context, pool *pgxpool.Pool, agentID, key string, status Status, result json.RawMessage, detail string) (bool, error) {
 	var storedResult, storedDetail any
 	if len(result) > 0 {

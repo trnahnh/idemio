@@ -78,8 +78,6 @@ func run() error {
 	return serveUntilSignal(ctx, server, listener, cfg, logger)
 }
 
-// Draining is not a Phase 2 nicety here: an abandoned in-flight call leaves a pending key,
-// and pending keys the reconciler cannot resolve become indeterminate, which pages.
 func serveUntilSignal(ctx context.Context, server *http.Server, listener net.Listener,
 	cfg config.Config, logger *slog.Logger) error {
 

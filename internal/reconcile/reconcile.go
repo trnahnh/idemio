@@ -17,8 +17,6 @@ import (
 
 const defaultBatch = 200
 
-// Prober is read-only by construction. There is no mutating counterpart in this package,
-// and cmd/reconciler never imports one: ADR-0006.
 type Prober interface {
 	Probe(ctx context.Context, agentID, key string) (probe.Outcome, json.RawMessage, error)
 }
@@ -132,8 +130,6 @@ func (r *Reconciler) resolve(ctx context.Context, candidate stale, summary *Summ
 
 	outcome, result, err := r.prober.Probe(ctx, candidate.agentID, candidate.key)
 	if err != nil {
-		// An unreachable probe has not answered. Escalating here would turn a transient
-		// probe outage into a flood of terminal records that each need a human.
 		summary.Unresolved++
 		r.metrics.ProbeFailures.WithLabelValues(candidate.resourceType).Inc()
 		r.logger.Warn("probe unavailable; key left pending",

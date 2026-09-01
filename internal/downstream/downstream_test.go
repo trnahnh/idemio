@@ -73,7 +73,6 @@ func TestRefusedConnectionIsFailed(t *testing.T) {
 	}
 }
 
-// The case the taxonomy exists for: the write did execute, and we cannot know it.
 func TestTimeoutAfterSendIsIndeterminateEvenThoughItExecuted(t *testing.T) {
 	fake := faketest.Start(t)
 	fake.Script(t, "inv_8842", "hang")
@@ -135,9 +134,6 @@ func startCountingServer(t *testing.T) *countingServer {
 	return server
 }
 
-// Answers the first request on a connection and keeps it alive, then reads the second
-// request in full and drops the connection without responding. That is the dangerous shape:
-// the server received the write and could have applied it, and the client cannot tell.
 func (s *countingServer) serve(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
@@ -189,8 +185,6 @@ func TestTransportDoesNotReplayAWriteTheServerAlreadyRead(t *testing.T) {
 	}
 }
 
-// Control: the same server, driven by a request shaped the way net/http considers
-// replayable. If this does not double-deliver, the test above proves nothing.
 func TestTheReplayHazardIsRealForAnIdempotencyKeyHeader(t *testing.T) {
 	server := startCountingServer(t)
 	target := "http://" + server.listener.Addr().String() + "/v1/execute"

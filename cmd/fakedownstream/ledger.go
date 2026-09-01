@@ -18,8 +18,6 @@ type execution struct {
 	ReceivedAt    time.Time `json:"received_at"`
 }
 
-// The ledger is the sole oracle for what the downstream actually did. Appending to it is
-// the execution, and it lives outside idemio's database on purpose: ADR-0012.
 type ledger struct {
 	mu      sync.Mutex
 	file    *os.File

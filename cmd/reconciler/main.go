@@ -19,8 +19,6 @@ import (
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
-// This binary links internal/probe and never internal/downstream. The import graph is the
-// enforcement of "the reconciler has no downstream write path", and a test asserts it.
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)

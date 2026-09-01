@@ -70,7 +70,6 @@ func hashOf(t *testing.T, payload string) string {
 	return digest
 }
 
-// ROADMAP exit criterion 3: a re-serialized retry must replay, not return 422.
 func TestReserializedRequestsHashIdentically(t *testing.T) {
 	equivalent := []string{
 		`{"amount_cents":4200,"currency":"EUR"}`,

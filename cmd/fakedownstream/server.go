@@ -100,7 +100,6 @@ func (f *fake) handleExecute(w http.ResponseWriter, r *http.Request) {
 			"reason": "insufficient_funds",
 		})
 	case behaviorHang:
-		// The execution is already durable, so the probe reveals a call idemio never saw.
 		select {
 		case <-r.Context().Done():
 		case <-time.After(hangCap):

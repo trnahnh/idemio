@@ -23,8 +23,6 @@ const latestPartitionBound = `
 	  JOIN pg_inherits i ON i.inhrelid = c.oid
 	 WHERE i.inhparent = $1::regclass`
 
-// Read from the catalog, not from the migration file: DEPLOYMENT_CHECKLIST requires the
-// live constraint be verified, because it is the at-most-once guarantee.
 func VerifyUniqueConstraint(ctx context.Context, pool *pgxpool.Pool) error {
 	var columns string
 	if err := pool.QueryRow(ctx, constraintColumns).Scan(&columns); err != nil {

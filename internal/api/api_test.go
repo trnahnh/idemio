@@ -103,7 +103,6 @@ func (h *harness) read(t *testing.T, agent, key string) *http.Response {
 	return resp
 }
 
-// The only sanctioned assertion about what happened: the downstream's own ledger.
 func (h *harness) executions(t *testing.T, agent, key string) int {
 	t.Helper()
 	return len(h.fake.Executions(t, correlation.ID(agent, key)))
@@ -158,7 +157,6 @@ func TestReplayReturnsTheStoredResultWithoutReExecuting(t *testing.T) {
 	}
 }
 
-// ROADMAP exit criterion 4.
 func TestBusinessFailureIs201AndReplaysIdentically(t *testing.T) {
 	h := newHarness(t, 3*time.Second)
 	h.fake.Script(t, resourceID, "business-failure")
@@ -185,7 +183,6 @@ func TestBusinessFailureIs201AndReplaysIdentically(t *testing.T) {
 	}
 }
 
-// ROADMAP exit criterion 3.
 func TestReserializedRetryReplaysRatherThanRejecting(t *testing.T) {
 	h := newHarness(t, 3*time.Second)
 
@@ -219,7 +216,6 @@ func TestDifferentBodyUnderTheSameKeyIsRejected(t *testing.T) {
 	}
 }
 
-// ROADMAP exit criterion 1, verified against downstream records.
 func TestConcurrentDuplicateKeysExecuteOnceDownstream(t *testing.T) {
 	h := newHarness(t, 5*time.Second)
 
@@ -461,8 +457,6 @@ func (h *harness) metrics(t *testing.T) string {
 	return string(body)
 }
 
-// ROADMAP exit criterion 6 needs indeterminate alerting live, which starts with the signal
-// actually being exported.
 func TestIndeterminateKeysAreExported(t *testing.T) {
 	h := newHarness(t, 700*time.Millisecond)
 	h.fake.Script(t, resourceID, "hang")

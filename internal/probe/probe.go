@@ -11,8 +11,6 @@ import (
 	"github.com/trnahnh/idemio/internal/correlation"
 )
 
-// This package holds no mutating client. cmd/reconciler imports it and never
-// internal/downstream, which is what makes the no-write-path invariant structural.
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -64,7 +62,6 @@ func (c *Client) Executions(ctx context.Context, agentID, key string) (Verdict, 
 
 type Outcome int
 
-// Unknown is the zero value so an unhandled probe path escalates rather than resolves.
 const (
 	Unknown Outcome = iota
 	Executed

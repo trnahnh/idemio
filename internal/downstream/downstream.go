@@ -14,14 +14,10 @@ import (
 	"github.com/trnahnh/idemio/internal/correlation"
 )
 
-// The correlation header must never be named Idempotency-Key or X-Idempotency-Key:
-// net/http treats a POST carrying either as replayable and may re-send it on a reused
-// connection, executing the write twice. ADR-0012.
 const CorrelationHeader = "X-Idemio-Correlation-Id"
 
 type Disposition int
 
-// The zero value is Indeterminate so an unclassified path fails safe: ADR-0005.
 const (
 	Indeterminate Disposition = iota
 	Done
@@ -59,8 +55,6 @@ type Client struct {
 	http    *http.Client
 }
 
-// notDialed marks an error raised before a connection existed, which is the only evidence
-// that nothing was sent and therefore nothing executed.
 type notDialed struct{ err error }
 
 func (e *notDialed) Error() string { return e.err.Error() }
@@ -100,7 +94,6 @@ func (c *Client) Execute(ctx context.Context, req Request) Outcome {
 	if err != nil {
 		return Outcome{Disposition: Failed, Detail: fmt.Sprintf("build request: %v", err)}
 	}
-	// Second guard against the transparent retry described above.
 	httpReq.GetBody = nil
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set(CorrelationHeader, correlation.ID(req.AgentID, req.Key))
@@ -129,8 +122,6 @@ func classifyTransportError(err error) Outcome {
 	return Outcome{Detail: fmt.Sprintf("downstream_timeout_after_send: %v", err)}
 }
 
-// A definitive answer is a definitive outcome even when the answer is "no": a business
-// failure is done, not failed. Anything a server could have half-applied is indeterminate.
 func classifyResponse(status int, payload []byte) Outcome {
 	switch {
 	case status >= 200 && status < 300:

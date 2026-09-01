@@ -29,7 +29,6 @@ var (
 	templateErr  error
 )
 
-// New returns a pool on a database freshly cloned from a migrated template.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
@@ -37,7 +36,6 @@ func New(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// NewWithURL also yields the connection string, for tests that spawn a binary.
 func NewWithURL(t *testing.T) (*pgxpool.Pool, string) {
 	t.Helper()
 
@@ -67,7 +65,6 @@ func NewWithURL(t *testing.T) (*pgxpool.Pool, string) {
 	return pool, dsn
 }
 
-// Truncate empties every data table, leaving the schema in place.
 func Truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
@@ -88,8 +85,6 @@ func requireURL(t *testing.T) string {
 	return raw
 }
 
-// The template is keyed by the migration contents so a schema change invalidates it, and
-// guarded by an advisory lock because 'go test ./...' runs packages in parallel processes.
 func ensureTemplate(t *testing.T, adminURL string) string {
 	t.Helper()
 
@@ -121,8 +116,6 @@ func buildTemplate(adminURL, name string) error {
 	}
 	defer pool.Close()
 
-	// Advisory locks are session-scoped, so this must hold one connection rather than
-	// borrow from the pool per statement.
 	admin, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire admin connection: %w", err)

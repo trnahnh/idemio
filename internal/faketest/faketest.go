@@ -87,7 +87,6 @@ func (f *Fake) SetListener(t *testing.T, up bool) {
 	f.post(t, f.ControlURL+"/control/listener", body)
 }
 
-// Executions is the only sanctioned way to assert what the downstream actually did.
 func (f *Fake) Executions(t *testing.T, correlationID string) []Execution {
 	t.Helper()
 

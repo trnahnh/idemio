@@ -147,7 +147,6 @@ func TestUnprobeableResourceEscalatesToIndeterminate(t *testing.T) {
 	}
 }
 
-// A probe outage must not manufacture terminal records that each need a human.
 func TestUnreachableProbeLeavesTheKeyPending(t *testing.T) {
 	pool := testdb.New(t)
 	claimPending(t, pool, "invoice")
@@ -183,7 +182,6 @@ func TestFreshPendingKeysAreNotSwept(t *testing.T) {
 	}
 }
 
-// End to end against the real probe client and the fake's own ledger.
 func TestSweepResolvesFromTheDownstreamLedgerWithoutReExecuting(t *testing.T) {
 	pool := testdb.New(t)
 	fake := faketest.Start(t)
@@ -227,7 +225,6 @@ func executeOnFake(t *testing.T, fake *faketest.Fake, correlationID string) {
 	resp.Body.Close()
 }
 
-// The invariant is the import graph, so this reads the import graph.
 func TestReconcilerBinaryCannotWriteDownstream(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "github.com/trnahnh/idemio/cmd/reconciler").CombinedOutput()
 	if err != nil {

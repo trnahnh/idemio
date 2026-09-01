@@ -94,8 +94,6 @@ func walk(value any) error {
 	return nil
 }
 
-// JCS serializes numbers as IEEE-754 doubles, so a value the double cannot hold exactly
-// would hash inconsistently with what the client sent: ADR-0003.
 func checkNumber(number json.Number) error {
 	asFloat, err := number.Float64()
 	if err != nil {

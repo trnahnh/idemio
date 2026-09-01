@@ -513,3 +513,61 @@ func TestKeyCasingDoesNotSplitTheCorrelationId(t *testing.T) {
 			"which executes the write a second time", got)
 	}
 }
+
+func (h *harness) writeAndHangUp(t *testing.T, agent, key, payload string, after time.Duration) {
+	t.Helper()
+
+	body := `{"agent_id":"` + agent + `","resource_type":"invoice","resource_id":"` + resourceID +
+		`","operation":"create_charge","payload":` + payload + `}`
+
+	ctx, cancel := context.WithTimeout(context.Background(), after)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.server.URL+"/v1/writes",
+		strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set(api.HeaderAgentID, agent)
+	req.Header.Set(api.HeaderRole, api.RoleAgent)
+
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+		t.Fatal("the client was expected to hang up before the response")
+	}
+}
+
+func (h *harness) awaitTerminal(t *testing.T, agent, key string) string {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var status string
+		err := h.pool.QueryRow(context.Background(),
+			"SELECT status::text FROM idempotency_keys WHERE agent_id = $1 AND idempotency_key = $2::uuid",
+			agent, key).Scan(&status)
+		if err == nil && status != "pending" {
+			return status
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("key never reached a terminal status")
+	return ""
+}
+
+// A client hanging up must not turn a healthy write into an indeterminate record, because
+// indeterminate is terminal, needs a human, and pages.
+func TestClientDisconnectDoesNotAbandonTheWrite(t *testing.T) {
+	h := newHarness(t, 3*time.Second)
+	h.fake.Script(t, resourceID, "slow")
+
+	h.writeAndHangUp(t, agentID, keyA, `{"amount_cents":4200}`, 100*time.Millisecond)
+
+	if status := h.awaitTerminal(t, agentID, keyA); status != "done" {
+		t.Fatalf("status = %s, want done", status)
+	}
+	if got := h.executions(t, agentID, keyA); got != 1 {
+		t.Fatalf("downstream executed %d times, want 1", got)
+	}
+}

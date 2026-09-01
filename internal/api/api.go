@@ -177,8 +177,12 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req writeRequest,
 	operationClass string, claimed claim.Result) {
 
+	callCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()),
+		s.cfg.DownstreamConnectTimeout+s.cfg.DownstreamTimeout)
+	defer cancel()
+
 	started := time.Now()
-	outcome := s.downstream.Execute(r.Context(), downstream.Request{
+	outcome := s.downstream.Execute(callCtx, downstream.Request{
 		AgentID:      req.AgentID,
 		Key:          key,
 		ResourceType: req.ResourceType,

@@ -65,13 +65,11 @@ func TestConcurrentClaimsProduceExactlyOneWinner(t *testing.T) {
 	start.Add(1)
 
 	for i := range racers {
-		done.Add(1)
-		go func() {
-			defer done.Done()
+		done.Go(func() {
 			start.Wait()
 			result, err := claim.Claim(context.Background(), pool, request(keyA))
 			verdicts[i], errs[i] = result.Verdict, err
-		}()
+		})
 	}
 
 	start.Done()

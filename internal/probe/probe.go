@@ -61,3 +61,34 @@ func (c *Client) Executions(ctx context.Context, agentID, key string) (Verdict, 
 	}
 	return verdict, nil
 }
+
+type Outcome int
+
+// Unknown is the zero value so an unhandled probe path escalates rather than resolves.
+const (
+	Unknown Outcome = iota
+	Executed
+	NotExecuted
+)
+
+func (o Outcome) String() string {
+	switch o {
+	case Executed:
+		return "executed"
+	case NotExecuted:
+		return "not_executed"
+	default:
+		return "unknown"
+	}
+}
+
+func (c *Client) Probe(ctx context.Context, agentID, key string) (Outcome, json.RawMessage, error) {
+	verdict, err := c.Executions(ctx, agentID, key)
+	if err != nil {
+		return Unknown, nil, err
+	}
+	if verdict.Executions == 0 {
+		return NotExecuted, nil, nil
+	}
+	return Executed, verdict.Result, nil
+}

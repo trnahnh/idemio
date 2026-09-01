@@ -20,6 +20,7 @@ import (
 	"github.com/trnahnh/idemio/internal/correlation"
 	"github.com/trnahnh/idemio/internal/downstream"
 	"github.com/trnahnh/idemio/internal/faketest"
+	"github.com/trnahnh/idemio/internal/telemetry"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
 
@@ -57,7 +58,8 @@ func newHarness(t *testing.T, downstreamTimeout time.Duration) *harness {
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	client := downstream.New(fake.DataURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout)
-	server := httptest.NewServer(api.New(cfg, pool, client, logger).Routes())
+	metrics := telemetry.New(pool, cfg.ResultInlineBytes)
+	server := httptest.NewServer(api.New(cfg, pool, client, metrics, logger).Routes())
 	t.Cleanup(server.Close)
 
 	return &harness{server: server, fake: fake, pool: pool}
@@ -441,4 +443,58 @@ func sameJSON(t *testing.T, a, b any) bool {
 		t.Fatalf("marshal right: %v", err)
 	}
 	return bytes.Equal(left, right)
+}
+
+func (h *harness) metrics(t *testing.T) string {
+	t.Helper()
+
+	resp, err := http.Get(h.server.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("scrape metrics: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read metrics: %v", err)
+	}
+	return string(body)
+}
+
+// ROADMAP exit criterion 6 needs indeterminate alerting live, which starts with the signal
+// actually being exported.
+func TestIndeterminateKeysAreExported(t *testing.T) {
+	h := newHarness(t, 700*time.Millisecond)
+	h.fake.Script(t, resourceID, "hang")
+
+	h.write(t, agentID, keyA, `{"amount_cents":4200}`).Body.Close()
+
+	scraped := h.metrics(t)
+	for _, want := range []string{
+		"idemio_indeterminate_keys 1",
+		`idemio_writes_total{status="indeterminate"} 1`,
+		`idemio_responses_total{code="502"} 1`,
+	} {
+		if !strings.Contains(scraped, want) {
+			t.Errorf("metrics do not contain %q", want)
+		}
+	}
+}
+
+func TestClaimCollisionsAndReplaysAreCounted(t *testing.T) {
+	h := newHarness(t, 3*time.Second)
+
+	h.write(t, agentID, keyA, `{"amount_cents":4200}`).Body.Close()
+	h.write(t, agentID, keyA, `{"amount_cents":4200}`).Body.Close()
+
+	scraped := h.metrics(t)
+	for _, want := range []string{
+		"idemio_claim_collisions_total 1",
+		"idemio_replays_total 1",
+		"idemio_pending_keys 0",
+	} {
+		if !strings.Contains(scraped, want) {
+			t.Errorf("metrics do not contain %q", want)
+		}
+	}
 }

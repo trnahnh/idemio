@@ -55,7 +55,7 @@ func TestKillMidCallNeverProducesASecondExecution(t *testing.T) {
 	}
 
 	prober := probe.New(fake.DataURL, 3*time.Second)
-	summary, err := reconcile.New(pool, prober, time.Millisecond, quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, time.Millisecond, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}

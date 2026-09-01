@@ -11,9 +11,11 @@ const (
 	behaviorSucceed         = "succeed"
 	behaviorBusinessFailure = "business-failure"
 	behaviorHang            = "hang"
+	behaviorSlow            = "slow"
 
 	correlationHeader = "X-Idemio-Correlation-Id"
 	hangCap           = 5 * time.Minute
+	slowDelay         = 400 * time.Millisecond
 )
 
 type scripts struct {
@@ -98,6 +100,12 @@ func (f *fake) handleExecute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"status": "rejected",
 			"reason": "insufficient_funds",
+		})
+	case behaviorSlow:
+		time.Sleep(slowDelay)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":   "applied",
+			"sequence": recorded.Sequence,
 		})
 	case behaviorHang:
 		select {

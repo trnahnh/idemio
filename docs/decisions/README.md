@@ -17,6 +17,7 @@ line to point at it.
 | [0004](0004-concurrent-claim-resolution.md) | The loser of a claim race receives `202 Accepted` and polls; it never blocks on the winner | Accepted |
 | [0005](0005-downstream-outcome-taxonomy.md) | Downstream outcomes split three ways: definitive, provably-not-executed, indeterminate | Accepted |
 | [0006](0006-reconciliation-never-resumes.md) | Reconciliation never re-executes a stale `pending` key; it resolves via probe or escalates | Accepted |
+| [0012](0012-phase-0-implementation-stack.md) | Phase 0 is built on pgx/v5, stdlib net/http, embedded SQL migrations, env-only config, and a separately-processed fake downstream whose ledger is the sole correctness oracle | Accepted |
 
 ### Phase 1 — required before conflict detection ships
 

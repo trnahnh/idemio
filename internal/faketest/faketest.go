@@ -181,7 +181,7 @@ func build(t *testing.T) string {
 	t.Helper()
 
 	buildOnce.Do(func() {
-		out := filepath.Join(os.TempDir(), "idemio-fakedownstream")
+		out := filepath.Join(os.TempDir(), fmt.Sprintf("idemio-fakedownstream-%d", os.Getpid()))
 		if runtime.GOOS == "windows" {
 			out += ".exe"
 		}

@@ -10,7 +10,7 @@ are demonstrated. Each criterion below is written so that it can be answered yes
 
 | Phase | State |
 |---|---|
-| Phase 0 — core guarantee | **Not started.** Repository contains documentation only. |
+| Phase 0 — core guarantee | **In progress.** Exit criteria 1–4 demonstrated against the fake downstream's execution ledger; 5 and 6 outstanding. |
 | Phase 1 — intent log and conflict detection | Not started |
 | Phase 2 — horizontal scale-out | Not started |
 | Phase 3 — full onboarding and abuse detection | Not started |

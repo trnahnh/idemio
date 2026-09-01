@@ -22,8 +22,40 @@ twice.
 
 ## Status
 
-**Design phase. No implementation yet.** This repository currently contains specification
-documents only. Phase 0 is not started — see [ROADMAP.md](docs/ROADMAP.md).
+**Phase 0 in progress.** The core guarantee is implemented and four of six exit criteria are
+demonstrated — against the fake downstream's own execution ledger, never against idemio's
+logs or database. Outstanding: latency at real volume, and an alerting drill. See
+[ROADMAP.md](docs/ROADMAP.md).
+
+| Exit criterion | State |
+|---|---|
+| Concurrent duplicate keys execute once downstream | demonstrated |
+| Kill mid-call never re-executes; the reconciler resolves by probe | demonstrated |
+| A re-serialized retry replays rather than returning `422` | demonstrated |
+| A business failure replays identically | demonstrated |
+| p50 under 15ms and p99 under 60ms at real volume | outstanding |
+| `indeterminate` alerting live and fired in a drill | signal exported, drill outstanding |
+
+## Running it
+
+Requires Go 1.25+ and Docker.
+
+```sh
+docker compose up -d
+export IDEMIO_TEST_DATABASE_URL=postgres://idemio:idemio@localhost:5433/idemio
+go test ./...
+go test -tags killtest ./internal/reconcile/ -run TestKillMidCall
+```
+
+Tests **fail** rather than skip when the database is absent: a green run has to mean the
+guarantee was actually exercised.
+
+Three binaries: `cmd/idemio` (the API), `cmd/reconciler` (resolves stale claims, and links
+no code that can write downstream), and `cmd/fakedownstream` (a controllable downstream that
+keeps an independent execution ledger — the oracle every correctness test asserts against).
+Configuration is environment-only and documented in
+[DEPLOYMENT_CHECKLIST](docs/DEPLOYMENT_CHECKLIST.md); the process refuses to boot on a
+configuration that would turn healthy writes into unresolvable ones.
 
 ## How it works
 

@@ -53,6 +53,9 @@ type Result struct {
 	Verdict  Verdict
 	Record   Record
 	IntentID string
+	// Collided records that the claim insert hit an existing row, which is the ADR-0010
+	// routing trigger regardless of how the collision was then resolved.
+	Collided bool
 }
 
 const insertKey = `
@@ -101,10 +104,10 @@ func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error)
 			return Result{}, err
 		}
 		if existing.RequestHash != req.RequestHash {
-			return Result{Verdict: VerdictMismatch, Record: existing}, nil
+			return Result{Verdict: VerdictMismatch, Record: existing, Collided: true}, nil
 		}
 		if existing.Status != StatusFailed {
-			return Result{Verdict: VerdictExisting, Record: existing}, nil
+			return Result{Verdict: VerdictExisting, Record: existing, Collided: true}, nil
 		}
 
 		attempt, reclaimed, err := reclaim(ctx, tx, req)
@@ -113,7 +116,7 @@ func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error)
 		}
 		if !reclaimed {
 			existing.Status = StatusPending
-			return Result{Verdict: VerdictExisting, Record: existing}, nil
+			return Result{Verdict: VerdictExisting, Record: existing, Collided: true}, nil
 		}
 		existing.Status = StatusPending
 		existing.AttemptCount = attempt
@@ -127,7 +130,7 @@ func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error)
 		if err := tx.Commit(ctx); err != nil {
 			return Result{}, fmt.Errorf("commit reclaim: %w", err)
 		}
-		return Result{Verdict: VerdictClaimed, Record: existing, IntentID: intentID}, nil
+		return Result{Verdict: VerdictClaimed, Record: existing, IntentID: intentID, Collided: true}, nil
 	}
 
 	intentID, err := recordIntent(ctx, tx, req)

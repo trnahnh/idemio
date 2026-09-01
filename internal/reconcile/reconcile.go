@@ -12,6 +12,7 @@ import (
 	"github.com/trnahnh/idemio/internal/claim"
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/resource"
+	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
 const defaultBatch = 200
@@ -27,6 +28,7 @@ type Reconciler struct {
 	prober     Prober
 	staleAfter time.Duration
 	batch      int
+	metrics    *telemetry.Metrics
 	logger     *slog.Logger
 }
 
@@ -51,12 +53,15 @@ const selectStale = `
 	 ORDER BY claimed_at
 	 LIMIT $2`
 
-func New(pool *pgxpool.Pool, prober Prober, staleAfter time.Duration, logger *slog.Logger) *Reconciler {
+func New(pool *pgxpool.Pool, prober Prober, staleAfter time.Duration,
+	metrics *telemetry.Metrics, logger *slog.Logger) *Reconciler {
+
 	return &Reconciler{
 		pool:       pool,
 		prober:     prober,
 		staleAfter: staleAfter,
 		batch:      defaultBatch,
+		metrics:    metrics,
 		logger:     logger,
 	}
 }
@@ -130,6 +135,7 @@ func (r *Reconciler) resolve(ctx context.Context, candidate stale, summary *Summ
 		// An unreachable probe has not answered. Escalating here would turn a transient
 		// probe outage into a flood of terminal records that each need a human.
 		summary.Unresolved++
+		r.metrics.ProbeFailures.WithLabelValues(candidate.resourceType).Inc()
 		r.logger.Warn("probe unavailable; key left pending",
 			"agent_id", candidate.agentID, "key", candidate.key, "error", err)
 		return
@@ -139,10 +145,12 @@ func (r *Reconciler) resolve(ctx context.Context, candidate stale, summary *Summ
 	case probe.Executed:
 		if r.complete(ctx, candidate, claim.StatusDone, result, "resolved_by_probe", summary) {
 			summary.Done++
+			r.metrics.Reconciled.WithLabelValues("done").Inc()
 		}
 	case probe.NotExecuted:
 		if r.complete(ctx, candidate, claim.StatusFailed, nil, "probe_found_no_execution", summary) {
 			summary.Failed++
+			r.metrics.Reconciled.WithLabelValues("failed").Inc()
 		}
 	default:
 		r.escalate(ctx, candidate, "probe_returned_unknown", summary)
@@ -154,6 +162,7 @@ func (r *Reconciler) escalate(ctx context.Context, candidate stale, detail strin
 		return
 	}
 	summary.Indeterminate++
+	r.metrics.Reconciled.WithLabelValues("indeterminate").Inc()
 	r.logger.Error("key escalated to indeterminate",
 		"agent_id", candidate.agentID, "key", candidate.key,
 		"resource_type", candidate.resourceType, "detail", detail)

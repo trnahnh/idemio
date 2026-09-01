@@ -14,6 +14,7 @@ const AuthModeTrustedHeader = "trusted_header"
 type Config struct {
 	DatabaseURL string
 	ListenAddr  string
+	MetricsAddr string
 	AuthMode    string
 
 	ClaimPendingWait time.Duration
@@ -40,6 +41,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		DatabaseURL:              os.Getenv("IDEMIO_DATABASE_URL"),
 		ListenAddr:               withDefault("IDEMIO_LISTEN_ADDR", "127.0.0.1:8080"),
+		MetricsAddr:              withDefault("IDEMIO_METRICS_ADDR", "127.0.0.1:9090"),
 		AuthMode:                 withDefault("IDEMIO_AUTH_MODE", ""),
 		DownstreamBaseURL:        os.Getenv("IDEMIO_DOWNSTREAM_BASE_URL"),
 		ClaimPendingWait:         duration("IDEMIO_CLAIM_PENDING_WAIT_MS", 0, fail),

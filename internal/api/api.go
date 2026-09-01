@@ -16,6 +16,7 @@ import (
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/downstream"
 	"github.com/trnahnh/idemio/internal/resource"
+	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
 const (
@@ -27,11 +28,14 @@ type Server struct {
 	cfg        config.Config
 	pool       *pgxpool.Pool
 	downstream *downstream.Client
+	metrics    *telemetry.Metrics
 	logger     *slog.Logger
 }
 
-func New(cfg config.Config, pool *pgxpool.Pool, client *downstream.Client, logger *slog.Logger) *Server {
-	return &Server{cfg: cfg, pool: pool, downstream: client, logger: logger}
+func New(cfg config.Config, pool *pgxpool.Pool, client *downstream.Client,
+	metrics *telemetry.Metrics, logger *slog.Logger) *Server {
+
+	return &Server{cfg: cfg, pool: pool, downstream: client, metrics: metrics, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -41,7 +45,30 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	return mux
+	mux.Handle("GET /metrics", s.metrics.Handler())
+	return s.countResponses(mux)
+}
+
+type recorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *recorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (s *Server) countResponses(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		recording := &recorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recording, r)
+		s.metrics.Responses.WithLabelValues(strconv.Itoa(recording.status)).Inc()
+	})
 }
 
 type writeRequest struct {
@@ -127,13 +154,21 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if result.Collided {
+		s.metrics.ClaimCollisions.Inc()
+	}
+
 	switch result.Verdict {
 	case claim.VerdictMismatch:
+		s.metrics.HashMismatches.WithLabelValues(req.AgentID).Inc()
 		writeProblem(w, http.StatusUnprocessableEntity, key, "request_hash_mismatch",
 			"This key was previously used with a different request body.")
 	case claim.VerdictExisting:
 		s.writeExisting(w, key, result.Record)
 	default:
+		if result.Record.AttemptCount > 1 {
+			s.metrics.Reclaims.Inc()
+		}
 		s.execute(r, w, key, req, operationClass, result)
 	}
 }
@@ -141,6 +176,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req writeRequest,
 	operationClass string, claimed claim.Result) {
 
+	started := time.Now()
 	outcome := s.downstream.Execute(r.Context(), downstream.Request{
 		AgentID:      req.AgentID,
 		Key:          key,
@@ -149,8 +185,13 @@ func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req
 		Operation:    req.Operation,
 		Payload:      req.Payload,
 	})
+	s.metrics.DownstreamDuration.
+		WithLabelValues(outcome.Disposition.String()).
+		Observe(time.Since(started).Seconds())
+	s.metrics.ObserveResultSize(len(outcome.Result))
 
 	status := statusFor(outcome.Disposition)
+	s.metrics.Writes.WithLabelValues(string(status)).Inc()
 	if !s.persistOutcome(r.Context(), req.AgentID, key, status, outcome) {
 		s.logger.Error("outcome not recorded; key left pending for the reconciler",
 			"agent_id", req.AgentID, "key", key, "disposition", outcome.Disposition.String())
@@ -219,6 +260,7 @@ func (s *Server) persistOutcome(ctx context.Context, agentID, key string,
 func (s *Server) writeExisting(w http.ResponseWriter, key string, record claim.Record) {
 	switch record.Status {
 	case claim.StatusDone:
+		s.metrics.Replays.Inc()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"idempotency_key": key,
 			"status":          string(record.Status),

@@ -18,6 +18,7 @@ import (
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/downstream"
 	"github.com/trnahnh/idemio/internal/store"
+	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
 const (
@@ -60,6 +61,7 @@ func run() error {
 	server := &http.Server{
 		Handler: api.New(cfg, pool,
 			downstream.New(cfg.DownstreamBaseURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout),
+			telemetry.New(pool, cfg.ResultInlineBytes),
 			logger,
 		).Routes(),
 	}

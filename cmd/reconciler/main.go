@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/reconcile"
 	"github.com/trnahnh/idemio/internal/store"
+	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
 // This binary links internal/probe and never internal/downstream. The import graph is the
@@ -47,12 +49,24 @@ func run() error {
 		return err
 	}
 
+	metrics := telemetry.New(pool, cfg.ResultInlineBytes)
+	go serveMetrics(cfg.MetricsAddr, metrics, logger)
+
 	prober := probe.New(cfg.DownstreamBaseURL, cfg.DownstreamTimeout)
-	reconciler := reconcile.New(pool, prober, cfg.ReconcileStaleAfter, logger)
+	reconciler := reconcile.New(pool, prober, cfg.ReconcileStaleAfter, metrics, logger)
 
 	logger.Info("reconciler started",
 		"interval", cfg.ReconcileInterval.String(),
 		"stale_after", cfg.ReconcileStaleAfter.String())
 
 	return reconciler.Run(ctx, cfg.ReconcileInterval)
+}
+
+func serveMetrics(addr string, metrics *telemetry.Metrics, logger *slog.Logger) {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", metrics.Handler())
+
+	if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("metrics endpoint stopped", "addr", addr, "error", err)
+	}
 }

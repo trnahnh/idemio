@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: idemio
+          POSTGRES_PASSWORD: idemio
+          POSTGRES_DB: idemio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U idemio -d idemio"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+
+    env:
+      IDEMIO_TEST_DATABASE_URL: postgres://idemio:idemio@localhost:5432/idemio
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test ./... -count=1
+
+      # Exit criterion 2. Kept out of the default run because it builds and kills a binary.
+      - name: kill test
+        run: go test -tags killtest ./internal/reconcile/ -run TestKillMidCall -count=1

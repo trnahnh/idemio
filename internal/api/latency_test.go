@@ -45,14 +45,22 @@ func percentile(durations []time.Duration, p float64) time.Duration {
 	return sorted[index]
 }
 
-func timeThroughIdemio(t *testing.T, h *harness, count int) []time.Duration {
+// Two shapes, because they measure different things. Spread traffic is the ordinary write
+// path. A single resource is the worst case ADR-0015 names explicitly: every write
+// serializes on one lock and every write sees a full conflict window.
+func timeThroughIdemio(t *testing.T, h *harness, count int, spread bool) []time.Duration {
 	t.Helper()
 
 	var timings []time.Duration
-	for range count {
+	for i := range count {
 		key := randomKey(t)
+		resource := resourceID
+		if spread {
+			resource = fmt.Sprintf("inv_%d", i)
+		}
+
 		started := time.Now()
-		resp := h.write(t, agentID, key, payloadBody)
+		resp := h.writeOp(t, agentID, key, "invoice", resource, "create_charge", payloadBody)
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		timings = append(timings, time.Since(started))
@@ -97,10 +105,10 @@ func timeDirectToDownstream(t *testing.T, h *harness, count int) []time.Duration
 func TestWritePathOverheadIsWithinBudget(t *testing.T) {
 	h := newHarness(t, 5*time.Second)
 
-	timeThroughIdemio(t, h, warmup)
+	timeThroughIdemio(t, h, warmup, true)
 	timeDirectToDownstream(t, h, warmup)
 
-	throughIdemio := timeThroughIdemio(t, h, samples)
+	throughIdemio := timeThroughIdemio(t, h, samples, true)
 	direct := timeDirectToDownstream(t, h, samples)
 
 	overheadP50 := percentile(throughIdemio, 0.50) - percentile(direct, 0.50)
@@ -121,4 +129,23 @@ func TestWritePathOverheadIsWithinBudget(t *testing.T) {
 	if overheadP99 > budgetP99 {
 		t.Errorf("p99 overhead %s exceeds the %s budget", overheadP99, budgetP99)
 	}
+}
+
+// Not a budget check. ADR-0015 accepts that a single hot resource_id serializes and is
+// throughput-limited by design; this measures how expensive that actually is, so the
+// ceiling is a number rather than a warning.
+func TestHotResourceCostIsMeasured(t *testing.T) {
+	h := newHarness(t, 5*time.Second)
+
+	timeThroughIdemio(t, h, warmup, false)
+	hot := timeThroughIdemio(t, h, samples, false)
+	direct := timeDirectToDownstream(t, h, samples)
+
+	t.Logf("n=%d on one resource_id  p50=%s p99=%s | direct p50=%s | overhead p50=%s p99=%s",
+		samples,
+		percentile(hot, 0.50).Round(time.Microsecond),
+		percentile(hot, 0.99).Round(time.Microsecond),
+		percentile(direct, 0.50).Round(time.Microsecond),
+		(percentile(hot, 0.50) - percentile(direct, 0.50)).Round(time.Microsecond),
+		(percentile(hot, 0.99) - percentile(direct, 0.99)).Round(time.Microsecond))
 }

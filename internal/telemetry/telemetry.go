@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +15,7 @@ import (
 type Metrics struct {
 	registry          *prometheus.Registry
 	resultInlineBytes int64
+	names             []string
 
 	Writes          *prometheus.CounterVec
 	Responses       *prometheus.CounterVec
@@ -29,39 +31,46 @@ type Metrics struct {
 }
 
 func New(pool *pgxpool.Pool, resultInlineBytes int64, logger *slog.Logger) *Metrics {
-	registry := prometheus.NewRegistry()
-
 	m := &Metrics{
-		registry: registry,
-		Writes: counterVec(registry, "idemio_writes_total",
-			"Writes by terminal status.", "status"),
-		Responses: counterVec(registry, "idemio_responses_total",
-			"API responses by status code.", "code"),
-		Replays: counter(registry, "idemio_replays_total",
-			"Replays served from a stored result. A high rate is the system working."),
-		ClaimCollisions: counter(registry, "idemio_claim_collisions_total",
-			"Claims that hit an existing key. An ADR-0010 routing trigger above 1% of writes."),
-		Reclaims: counter(registry, "idemio_reclaims_total",
-			"Re-claims of keys previously left failed."),
-		HashMismatches: counterVec(registry, "idemio_hash_mismatches_total",
-			"Reused keys carrying a different request body, by agent.", "agent_id"),
-		OversizedResult: counter(registry, "idemio_oversized_results_total",
-			"Results stored inline above limits.result_inline_bytes. Phase 1 sets the cap from this."),
-		ProbeFailures: counterVec(registry, "idemio_probe_failures_total",
-			"Probes that could not be reached, by resource type.", "resource_type"),
-		Reconciled: counterVec(registry, "idemio_reconciled_total",
-			"Stale pending keys resolved by the reconciler, by outcome.", "outcome"),
-		DownstreamDuration: histogramVec(registry, "idemio_downstream_duration_seconds",
-			"Downstream call latency by disposition.", "disposition"),
+		registry:          prometheus.NewRegistry(),
+		resultInlineBytes: resultInlineBytes,
 	}
 
-	registry.MustRegister(&databaseCollector{pool: pool, logger: logger})
-	m.resultInlineBytes = resultInlineBytes
+	m.Writes = m.counterVec("idemio_writes_total",
+		"Writes by terminal status.", "status")
+	m.Responses = m.counterVec("idemio_responses_total",
+		"API responses by status code.", "code")
+	m.Replays = m.counter("idemio_replays_total",
+		"Replays served from a stored result. A high rate is the system working.")
+	m.ClaimCollisions = m.counter("idemio_claim_collisions_total",
+		"Claims that hit an existing key. An ADR-0010 routing trigger above 1% of writes.")
+	m.Reclaims = m.counter("idemio_reclaims_total",
+		"Re-claims of keys previously left failed.")
+	m.HashMismatches = m.counterVec("idemio_hash_mismatches_total",
+		"Reused keys carrying a different request body, by agent.", "agent_id")
+	m.OversizedResult = m.counter("idemio_oversized_results_total",
+		"Results stored inline above limits.result_inline_bytes. Phase 1 sets the cap from this.")
+	m.ProbeFailures = m.counterVec("idemio_probe_failures_total",
+		"Probes that could not be reached, by resource type.", "resource_type")
+	m.Reconciled = m.counterVec("idemio_reconciled_total",
+		"Stale pending keys resolved by the reconciler, by outcome.", "outcome")
+	m.DownstreamDuration = m.histogramVec("idemio_downstream_duration_seconds",
+		"Downstream call latency by disposition.", "disposition")
+
+	m.registry.MustRegister(&databaseCollector{pool: pool, logger: logger})
+	m.names = append(m.names,
+		indeterminateKeysName, pendingKeysName, oldestPendingAgeName, partitionHeadroomName)
+
+	slices.Sort(m.names)
 	return m
 }
 
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+}
+
+func (m *Metrics) Names() []string {
+	return slices.Clone(m.names)
 }
 
 func (m *Metrics) ObserveResultSize(size int) {
@@ -70,43 +79,53 @@ func (m *Metrics) ObserveResultSize(size int) {
 	}
 }
 
-func counter(registry *prometheus.Registry, name, help string) prometheus.Counter {
+func (m *Metrics) counter(name, help string) prometheus.Counter {
 	c := prometheus.NewCounter(prometheus.CounterOpts{Name: name, Help: help})
-	registry.MustRegister(c)
+	m.registry.MustRegister(c)
+	m.names = append(m.names, name)
 	return c
 }
 
-func counterVec(registry *prometheus.Registry, name, help string, labels ...string) *prometheus.CounterVec {
+func (m *Metrics) counterVec(name, help string, labels ...string) *prometheus.CounterVec {
 	c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: name, Help: help}, labels)
-	registry.MustRegister(c)
+	m.registry.MustRegister(c)
+	m.names = append(m.names, name)
 	return c
 }
 
-func histogramVec(registry *prometheus.Registry, name, help string, labels ...string) *prometheus.HistogramVec {
+func (m *Metrics) histogramVec(name, help string, labels ...string) *prometheus.HistogramVec {
 	h := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    name,
 		Help:    help,
 		Buckets: prometheus.DefBuckets,
 	}, labels)
-	registry.MustRegister(h)
+	m.registry.MustRegister(h)
+	m.names = append(m.names, name)
 	return h
 }
 
+const (
+	indeterminateKeysName = "idemio_indeterminate_keys"
+	pendingKeysName       = "idemio_pending_keys"
+	oldestPendingAgeName  = "idemio_oldest_pending_age_seconds"
+	partitionHeadroomName = "idemio_partition_headroom_seconds"
+)
+
 var (
 	indeterminateKeys = prometheus.NewDesc(
-		"idemio_indeterminate_keys",
+		indeterminateKeysName,
 		"Keys whose outcome is unknown. The correct value is zero; any sustained value pages.",
 		nil, nil)
 	pendingKeys = prometheus.NewDesc(
-		"idemio_pending_keys",
+		pendingKeysName,
 		"Keys currently claimed with a downstream call in flight.",
 		nil, nil)
 	oldestPendingAge = prometheus.NewDesc(
-		"idemio_oldest_pending_age_seconds",
+		oldestPendingAgeName,
 		"Age of the oldest pending key. Compared against reconcile.stale_after.",
 		nil, nil)
 	partitionHeadroom = prometheus.NewDesc(
-		"idemio_partition_headroom_seconds",
+		partitionHeadroomName,
 		"Time until the newest range partition ends. A missing partition is a write outage.",
 		[]string{"table"}, nil)
 )

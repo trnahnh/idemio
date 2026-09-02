@@ -12,6 +12,7 @@ const (
 	behaviorBusinessFailure = "business-failure"
 	behaviorHang            = "hang"
 	behaviorSlow            = "slow"
+	behaviorRefuse          = "refuse"
 
 	correlationHeader = "X-Idemio-Correlation-Id"
 	hangCap           = 5 * time.Minute
@@ -81,6 +82,16 @@ func (f *fake) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	behavior := f.scripts.pop(req.ResourceID)
+
+	// A refusal is the one scripted response that must leave no trace: the classification
+	// says it was never executed, so the oracle has to agree.
+	if behavior == behaviorRefuse {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"status": "refused",
+			"reason": "rate_limited",
+		})
+		return
+	}
 
 	recorded, err := f.ledger.record(execution{
 		CorrelationID: r.Header.Get(correlationHeader),

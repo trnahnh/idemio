@@ -32,10 +32,11 @@ type Fake struct {
 }
 
 type Execution struct {
-	Sequence      int    `json:"sequence"`
-	CorrelationID string `json:"correlation_id"`
-	ResourceID    string `json:"resource_id"`
-	Behavior      string `json:"behavior"`
+	Sequence      int       `json:"sequence"`
+	CorrelationID string    `json:"correlation_id"`
+	ResourceID    string    `json:"resource_id"`
+	Behavior      string    `json:"behavior"`
+	ReceivedAt    time.Time `json:"received_at"`
 }
 
 func Start(t *testing.T) *Fake {

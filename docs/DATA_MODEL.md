@@ -38,7 +38,7 @@ CREATE TYPE key_status AS ENUM (
     'rejected'        -- blocked by conflict detection or policy
 );
 
-CREATE TYPE conflict_resolution AS ENUM ('serialized', 'rejected', 'manual');
+CREATE TYPE conflict_resolution AS ENUM ('serialized', 'rejected', 'manual', 'observed');
 
 CREATE TYPE operation_class AS ENUM ('create', 'replace', 'mutate', 'append', 'delete');
 ```
@@ -157,6 +157,7 @@ CREATE TABLE write_intents (
     payload           JSONB           NOT NULL,
     emitted_at        TIMESTAMPTZ     NOT NULL DEFAULT now(),
     published_at      TIMESTAMPTZ,                -- outbox watermark; NULL = unpublished
+    voided_at         TIMESTAMPTZ,                -- the write provably did not happen (ADR-0015)
 
     PRIMARY KEY (intent_id, emitted_at)
 ) PARTITION BY RANGE (emitted_at);
@@ -175,17 +176,26 @@ CREATE INDEX idx_intents_unpublished ON write_intents (emitted_at)
     WHERE published_at IS NULL;
 ```
 
+`voided_at` is set when conflict detection rejects the write, and when a key completes as
+`failed`. An intent participates in the conflict window unless the write it records
+provably did not happen; without it one rejection cascades into the next
+([ADR-0015](decisions/0015-conflict-check-transaction-shape.md)). `indeterminate` and
+`pending` intents are never voided, because they may have executed.
+
 **Conflict-check query,** run under the advisory lock from
-[ADR-0008](decisions/0008-serialization-via-advisory-locks.md) and evaluated against the
-matrix in [ADR-0007](decisions/0007-operation-compatibility-matrix.md):
+[ADR-0008](decisions/0008-serialization-via-advisory-locks.md) — which
+[ADR-0015](decisions/0015-conflict-check-transaction-shape.md) makes the transaction's
+first statement — and evaluated against the matrix in
+[ADR-0007](decisions/0007-operation-compatibility-matrix.md):
 
 ```sql
-SELECT intent_id, agent_id, operation, operation_class, scope_selector
+SELECT intent_id, agent_id, idempotency_key, operation, operation_class, scope_selector
   FROM write_intents
  WHERE resource_type = $1
    AND resource_id   = $2
    AND emitted_at > now() - $3::interval   -- per-resource_type window, default 5s
-   AND idempotency_key <> $4;              -- exclude our own just-inserted intent
+   AND voided_at IS NULL                   -- writes that did not happen do not conflict
+   AND intent_id <> $4;                    -- exclude our own just-inserted intent
 ```
 
 ## conflicts
@@ -204,6 +214,7 @@ CREATE TABLE conflicts (
     resource_id       TEXT                NOT NULL,
     reason            TEXT                NOT NULL,   -- e.g. mutate/mutate overlapping scope
     resolution        conflict_resolution NOT NULL,
+    manifest_version  TEXT,                           -- the ruleset that judged it (ADR-0013)
     detected_at       TIMESTAMPTZ         NOT NULL DEFAULT now(),
 
     PRIMARY KEY (conflict_id, detected_at)
@@ -212,6 +223,30 @@ CREATE TABLE conflicts (
 CREATE INDEX idx_conflicts_detected ON conflicts (detected_at DESC);
 CREATE INDEX idx_conflicts_agent    ON conflicts (agent_id_a, detected_at DESC);
 CREATE INDEX idx_conflicts_resource ON conflicts (resource_type, resource_id, detected_at DESC);
+```
+
+## manifest_activations
+
+Records which manifest version a process was serving when it judged a write. Git owns what
+the manifest said; nothing else records where and when it was live
+([ADR-0013](decisions/0013-phase-1-implementation-stack.md)). Low volume and unpartitioned:
+one row per process per version.
+
+```sql
+CREATE TABLE manifest_activations (
+    activation_id     UUID        NOT NULL DEFAULT uuidv7(),
+    manifest_version  TEXT        NOT NULL,   -- content hash of the manifest directory
+    principal         TEXT        NOT NULL,   -- host and pid of the serving process
+    resource_types    TEXT[]      NOT NULL,
+    activated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (activation_id)
+);
+
+CREATE UNIQUE INDEX idx_manifest_activations_unique
+    ON manifest_activations (principal, manifest_version);
+CREATE INDEX idx_manifest_activations_time
+    ON manifest_activations (activated_at DESC);
 ```
 
 ## payload_access_audit
@@ -248,6 +283,8 @@ where schema changes happen and where the classification must be visible.
 | `idempotency_keys.request_hash` | Internal | A digest, but confirms request equality. Not returned by any API. |
 | `conflicts.*` | Internal | Metadata only. Available to `operator`. |
 | `payload_access_audit.*` | **Confidential** | Reveals investigative activity. Access limited to security roles. |
+| `idempotency_keys.result` when `status = 'rejected'` | Internal | A conflict rejection body, not a downstream response. Redaction treats the column uniformly as Confidential, which over-classifies in this case — the safe direction. |
+| `manifest_activations.*` | Internal | Which ruleset was live where. |
 | all other columns | Internal | Resource identifiers, operations, timestamps, statuses. |
 
 ## Retention
@@ -258,6 +295,7 @@ where schema changes happen and where the classification must be visible.
 | `write_intents` | `DETACH PARTITION`, export to Parquet, `DROP` | 90 days |
 | `conflicts` | `DETACH PARTITION`, export, `DROP` | 1 year |
 | `payload_access_audit` | `DETACH PARTITION`, export, `DROP` | 1 year |
+| `manifest_activations` | None; retained indefinitely | — |
 
 The mechanisms differ for the reason given in
 [ADR-0009](decisions/0009-partitioning-and-retention.md): hash partitions cannot be dropped
@@ -268,7 +306,8 @@ over cheap archival. Archive restore must be drilled, not assumed; see
 ## Not in the database
 
 The **operation manifest** (per `resource_type`: operation classes, scope selectors,
-conflict window, error classification, probe availability) is versioned configuration, not
-a table. It is hot-reloadable, reviewed as code, and its changes are audited. Keeping it
-out of the database makes a manifest change a reviewed deploy artifact rather than a
-production `UPDATE`.
+conflict window, enforcement, error classification, probe path) is versioned configuration,
+not a table. It is hot-reloadable, reviewed as code, and its activations are recorded in
+`manifest_activations`. Keeping it out of the database makes a manifest change a reviewed
+deploy artifact rather than a production `UPDATE`. Its format and lifecycle are owned by
+[ADR-0013](decisions/0013-phase-1-implementation-stack.md).

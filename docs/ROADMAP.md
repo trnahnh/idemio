@@ -74,6 +74,12 @@ requiring a change to the write transaction.
    (`go test -tags latency ./internal/api/`). Phase 0 measured 4.1ms / 5.9ms before the
    resource lock and conflict window existed.*
 
+   *CI asserts only the p50. At 300 samples a p99 is the third-worst observation, and a
+   shared runner once produced a 20ms p99 on a direct localhost call whose p50 was 576µs —
+   a threshold that fails on the runner's mood trains people to ignore a red build. The
+   tail is measured by the load harness instead, where it is drawn from thousands of
+   samples on a machine that is not shared.*
+
    *This still does not satisfy the criterion as written — "real volume" means real traffic
    with a network between the tiers and a downstream that is not a local process — but it is
    no longer an untested claim, and it puts Phase 2's 2,000/sec target in context: one

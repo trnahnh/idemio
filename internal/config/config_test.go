@@ -22,6 +22,56 @@ func valid() config.Config {
 		PayloadBytes:             262144,
 		ResultInlineBytes:        65536,
 		OutcomeWriteAttempts:     3,
+		ManifestDir:              "manifests",
+		ManifestReloadInterval:   30 * time.Second,
+		ConflictLockTimeout:      250 * time.Millisecond,
+		ReadMaxSpan:              31 * 24 * time.Hour,
+		PartitionAhead:           8 * 7 * 24 * time.Hour,
+		RetentionKeys:            90 * 24 * time.Hour,
+		RetentionIntents:         90 * 24 * time.Hour,
+		RetentionConflicts:       365 * 24 * time.Hour,
+		RetentionAudit:           365 * 24 * time.Hour,
+		RetentionRowsPerSec:      500,
+		KafkaTopic:               "idemio.write-intents",
+		RelayInterval:            time.Second,
+		RelayBatch:               500,
+	}
+}
+
+// The bound on a same-agent wait is derived, not configured, so it cannot be set below the
+// call budget it is waiting on (ADR-0015).
+func TestSerializeWaitTracksTheDownstreamBudget(t *testing.T) {
+	cfg := valid()
+
+	want := cfg.DownstreamConnectTimeout + cfg.DownstreamTimeout
+	if got := cfg.SerializeWait(); got != want {
+		t.Fatalf("SerializeWait() = %s, want %s", got, want)
+	}
+}
+
+func TestPartitionAheadBelowThePagingThresholdRefusesToBoot(t *testing.T) {
+	cfg := valid()
+	cfg.PartitionAhead = 7 * 24 * time.Hour
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("a partition horizon shorter than the alert threshold was accepted")
+	}
+	if !strings.Contains(err.Error(), "IDEMIO_PARTITION_AHEAD") {
+		t.Errorf("error does not name the offending key: %v", err)
+	}
+}
+
+func TestAMissingManifestDirRefusesToBoot(t *testing.T) {
+	cfg := valid()
+	cfg.ManifestDir = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("a process with no manifest directory was accepted; it could serve no write")
+	}
+	if !strings.Contains(err.Error(), "IDEMIO_MANIFEST_DIR") {
+		t.Errorf("error does not name the offending key: %v", err)
 	}
 }
 

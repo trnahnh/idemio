@@ -1,5 +1,7 @@
 # idemio
 
+[![ci](https://github.com/trnahnh/idemio/actions/workflows/ci.yml/badge.svg)](https://github.com/trnahnh/idemio/actions/workflows/ci.yml)
+
 An idempotent transaction layer for agent-driven writes.
 
 AI agents retry writes after timeouts and ambiguous responses, and multiple agents write
@@ -59,7 +61,14 @@ and then flipping one field.
 Requires Go 1.25+ and Docker.
 
 ```sh
-docker compose up -d
+make up       # postgres, pgbouncer, redpanda and minio, waited on until healthy
+make verify   # gofmt, vet, the full suite, the kill test and the latency floor
+```
+
+Or without `make`:
+
+```sh
+docker compose up -d --wait
 
 export IDEMIO_TEST_DATABASE_URL=postgres://idemio:idemio@localhost:5433/idemio
 export IDEMIO_TEST_POOLED_ADDR=localhost:6433

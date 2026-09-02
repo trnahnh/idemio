@@ -36,7 +36,7 @@ Phase 0 — the core guarantee:
 | Kill mid-call never re-executes; the reconciler resolves by probe | demonstrated |
 | A re-serialized retry replays rather than returning `422` | demonstrated |
 | A business failure replays identically | demonstrated |
-| p50 under 15ms and p99 under 60ms at real volume | floor measured (p50 8.4ms, p99 10.6ms); real volume outstanding |
+| p50 under 15ms and p99 under 60ms at real volume | budget holds to ~600 writes/sec on one machine (p50 13.2ms, p99 33.3ms); real traffic outstanding |
 | `indeterminate` alerting live and fired in a drill | rules in `deploy/alerts.yml`; pager and drill outstanding |
 
 Phase 1 — the intent log and conflict detection:
@@ -63,6 +63,7 @@ Requires Go 1.25+ and Docker.
 ```sh
 make up       # postgres, pgbouncer, redpanda and minio, waited on until healthy
 make verify   # gofmt, vet, the full suite, the kill test and the latency floor
+make load     # concurrent open-loop load; asserts exactly-once, reports the latency curve
 ```
 
 Or without `make`:

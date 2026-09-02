@@ -8,7 +8,7 @@ export IDEMIO_TEST_POOLED_ADDR
 export IDEMIO_TEST_KAFKA_BROKERS
 export IDEMIO_TEST_ARCHIVE_ENDPOINT
 
-.PHONY: up down test verify fmt vet
+.PHONY: up down test verify load fmt vet
 
 up:
 	docker compose up -d --wait
@@ -24,6 +24,12 @@ test:
 verify: fmt vet test
 	go test -tags killtest ./internal/reconcile/ -run TestKillMidCall -count=1
 	go test -tags latency ./internal/api/ -count=1
+
+# Open loop at a fixed arrival rate: a closed loop would send fewer requests as the system
+# slowed, so its percentiles would flatter exactly the case worth measuring. Override with
+# IDEMIO_LOAD_RATE, IDEMIO_LOAD_SECONDS and IDEMIO_LOAD_RESOURCES.
+load:
+	go test -tags loadtest ./internal/api/ -run TestWritePathUnderConcurrentLoad -count=1 -v -timeout 20m
 
 fmt:
 	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }

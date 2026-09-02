@@ -24,8 +24,53 @@ jobs:
           --health-timeout 3s
           --health-retries 15
 
+      # Transaction-mode pooling is the deployment shape, so one package's suite runs
+      # through it. The wildcard database entry lets it reach per-test databases.
+      pgbouncer:
+        image: edoburu/pgbouncer:latest
+        env:
+          DB_HOST: postgres
+          DB_PORT: 5432
+          DB_USER: idemio
+          DB_PASSWORD: idemio
+          POOL_MODE: transaction
+          AUTH_TYPE: scram-sha-256
+          MAX_CLIENT_CONN: 500
+          DEFAULT_POOL_SIZE: 25
+          ADMIN_USERS: idemio
+        ports:
+          - 6432:5432
+
+      redpanda:
+        image: redpandadata/redpanda:latest
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "rpk cluster health | grep -q 'Healthy:.*true'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: idemio
+          MINIO_ROOT_PASSWORD: idemio-secret
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     env:
       IDEMIO_TEST_DATABASE_URL: postgres://idemio:idemio@localhost:5432/idemio
+      IDEMIO_TEST_POOLED_ADDR: localhost:6432
+      IDEMIO_TEST_KAFKA_BROKERS: localhost:9092
+      IDEMIO_TEST_ARCHIVE_ENDPOINT: localhost:9000
+      IDEMIO_TEST_ARCHIVE_ACCESS_KEY: idemio
+      IDEMIO_TEST_ARCHIVE_SECRET_KEY: idemio-secret
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +88,6 @@ jobs:
       - name: test
         run: go test ./... -count=1
 
-      # Exit criterion 2. Kept out of the default run because it builds and kills a binary.
+      # Phase 0 exit criterion 2. Kept out of the default run because it builds and kills a binary.
       - name: kill test
         run: go test -tags killtest ./internal/reconcile/ -run TestKillMidCall -count=1

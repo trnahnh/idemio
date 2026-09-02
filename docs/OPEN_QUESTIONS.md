@@ -60,7 +60,14 @@ detects real conflicts rather than temporal proximity, and has no window to tune
 places semantic conflict detection out of scope for v1.
 **Decide when:** conflict-rate data from Phase 1 shows either many false positives (the
 window is too blunt) or incidents from conflicts outside the window (the window is too
-short). Both are measurable with metrics that already exist.
+short).
+
+**Status after Phase 1:** the instrument now exists and is better than expected. Shadow
+mode records what the matrix *would* have rejected without rejecting it, so the false
+positive rate can be read from `idemio_conflicts_total{resolution="observed"}` and
+`GET /v1/conflicts` against real traffic, before anything is enforced. What is still
+missing is traffic. Conflicts outside the window remain unmeasurable from inside this
+layer by construction — that half needs a downstream that reports its own conflicts.
 
 ### Q4. What is the correct behaviour when an agent legitimately needs to retry an
 `indeterminate` write?
@@ -75,6 +82,12 @@ auto-resume will be strong and wrong.
 treat a `resource_type` without a probe as a gap to close rather than a permanent state.
 Auto-resume should stay off the table; the question is how to make probes universal.
 
+**Status after Phase 1:** the probe path is declared per `resource_type` in the manifest
+and the reconciler uses that declaration, so a path with unusual probe semantics no longer
+has to share one address with everything else. Manifest validation refuses to boot a type
+that declares no probe path, which makes "this integration has no probe" a decision someone
+has to record rather than a default nobody notices.
+
 ### Q5. Does the `202` polling contract hold up under real agent frameworks?
 
 [ADR-0004](decisions/0004-concurrent-claim-resolution.md) requires agents to handle `202`
@@ -86,6 +99,14 @@ terminal, or that retries `POST` on a `202`, would defeat it.
 **Alternatives if it does not hold:** raise `claim.pending_wait_ms` so the common case
 resolves within the original request, or offer a long-polling variant of
 `GET /v1/writes/{key}`. Both are additive and neither changes the guarantee.
+
+**Status after Phase 1:** the surface shrank. Lock and serialization timeouts were going to
+return `202` under [ADR-0008](decisions/0008-serialization-via-advisory-locks.md); they now
+return `503` because nothing was written
+([ADR-0015](decisions/0015-conflict-check-transaction-shape.md)). `202` is therefore reached
+only by the loser of a genuine claim race, which is rarer than a contended resource. A
+framework that mishandles `202` is now less likely to meet one, which reduces the risk
+without answering the question.
 
 ### Q6. Single-region only, or is cross-region replication in scope?
 
@@ -99,3 +120,20 @@ Postgres primary per region and no key ever crossing regions.
 **Decide when:** before any multi-region deployment is planned, not during.
 **Cost of deciding late:** very high. This is the one open question that could invalidate
 architecture rather than extend it.
+
+### Q7. Should the conflict window be capped by a count as well as by time?
+
+New in Phase 1. Conflict recording is capped at ten pairs per write because pairing each
+incoming intent against every live one in the window is quadratic in the per-resource write
+rate — measured at p50 58ms before the cap, 15ms after. The *verdict* is still computed
+against the whole window, so the cap costs only visibility, not correctness.
+
+That is the right trade at Phase 1 volume. It may not be at 2,000 writes/sec, where a hot
+resource could hold thousands of live intents and the scan itself, rather than the writes it
+produces, becomes the cost.
+
+**Decide when:** `idemio_lock_wait_seconds` shows the claim transaction dominated by the
+conflict check rather than by lock contention, at or above 70% of target throughput.
+**Likely shape of the answer:** bound the window query itself by row count as well as by
+time, which changes the verdict rather than the record and therefore needs its own ADR.
+**Cost of deciding late:** low. It is a query change, not a schema change.

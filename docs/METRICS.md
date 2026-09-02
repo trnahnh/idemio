@@ -25,7 +25,7 @@ incremented, so a restart cannot lose them and two replicas cannot double-count.
 | `idemio_probe_failures_total` | counter | `resource_type` | Warn. Crash recovery for that path is degrading toward manual. Failures leave keys `pending` rather than escalating, so this rising while `idemio_oldest_pending_age_seconds` climbs is one incident, not two. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
 | `idemio_reconciled_total` | counter | `outcome` (`done`, `failed`, `indeterminate`) | Warn on rising `indeterminate`. This is the reconciler's own account of what it escalated. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
 | `idemio_reclaim_attempts` | histogram | — | Warn on a rising **tail**, not on the rate. One key re-claimed forty times is a flapping downstream; forty keys re-claimed once each is normal traffic. `_count` still gives the rate. | [ADR-0002](decisions/0002-key-scope-and-status-lifecycle.md) |
-| `idemio_writes_total` | counter | `status` (`done`, `failed`, `indeterminate`) | The rate of `indeterminate` is the leading indicator; `idemio_indeterminate_keys` is the standing debt. | [ADR-0005](decisions/0005-downstream-outcome-taxonomy.md) |
+| `idemio_writes_total` | counter | `status` (`done`, `failed`, `indeterminate`, `rejected`) | The rate of `indeterminate` is the leading indicator; `idemio_indeterminate_keys` is the standing debt. `rejected` counts conflict rejections and is the denominator's counterpart in the conflict alert. | [ADR-0005](decisions/0005-downstream-outcome-taxonomy.md) |
 
 ## Contract health
 

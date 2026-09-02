@@ -166,9 +166,18 @@ guess ([ADR-0006](decisions/0006-reconciliation-never-resumes.md)).
 2. Write the error classification — which downstream errors are definitive, which are
    provably-not-executed, which are indeterminate. Default anything ambiguous to
    indeterminate.
-3. Write the probe, or record a signed-off acceptance that crash recovery for this path is
-   manual. This is a decision to make during onboarding, not to discover during an
-   incident.
+3. Write the probe and declare its path. This is a decision to make during onboarding, not
+   to discover during an incident.
+
+   Note that as of Phase 1 there is **no** way to express the alternative
+   [ADR-0006](decisions/0006-reconciliation-never-resumes.md) allows — a signed-off
+   acceptance that crash recovery for this path is manual. Manifest validation requires a
+   probe path and refuses to boot without one, so a write path with no probe cannot be
+   onboarded at all. That is stricter than the design intends and deliberately not relaxed
+   yet: the permissive direction is the one that gets taken under deadline pressure, and
+   [ROADMAP.md](ROADMAP.md) Phase 3 criterion 1 is where the acceptance path is actually
+   needed. Expressing it will mean adding a field to the manifest, which is cheaper to
+   argue for once there is a real integration that needs it.
 4. Confirm the downstream call carries a correlation id derived from the idempotency key.
    Without it, no probe is possible.
 5. Deploy with `enforce: false`. The conflict check runs in full and records

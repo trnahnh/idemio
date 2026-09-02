@@ -273,7 +273,9 @@ incident responder needs to see
       "idempotency_key": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
       "operation": "create_charge",
       "operation_class": "create",
+      "scope_selector": null,
       "emitted_at": "2026-09-01T10:15:00.008Z",
+      "voided": false,
       "payload": null,
       "payload_redacted": true
     }
@@ -308,8 +310,9 @@ after the rules change ([ADR-0013](decisions/0013-phase-1-implementation-stack.m
       "resource_id": "inv_8842",
       "agent_id_a": "agent-checkout-flow",
       "agent_id_b": "agent-dunning",
-      "reason": "mutate/mutate overlapping scope",
+      "reason": "mutate/mutate with overlapping scope [status] and [status]",
       "resolution": "rejected",
+      "manifest_version": "9f2c1a7e4b0d5386",
       "detected_at": "2026-09-01T10:15:00.011Z"
     }
   ],

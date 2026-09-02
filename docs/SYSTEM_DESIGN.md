@@ -76,9 +76,10 @@ to optimise something already safe is the wrong trade. See
 |---|---|
 | Middleware replica | Terminates agent connections, verifies identity, canonicalizes and hashes the request, runs the write flow, exposes the API. Holds no durable state. |
 | Postgres | Source of truth for key state **and** the intent log. Supplies the unique constraint and the advisory locks that make correctness work. |
-| Outbox relay | Tails `write_intents.published_at IS NULL` and publishes to Kafka at-least-once. Off the request path. Phase 1+. |
+| Outbox relay | Polls `write_intents.published_at IS NULL` and publishes to Kafka at-least-once, from its own binary. Off the request path, so its unavailability is never a write-path incident. |
 | Kafka / NATS | Long-horizon retention, replay, downstream analytics. Not a dependency of any request. |
-| Reconciler | Resolves stale `pending` keys. Has **no** downstream write path, structurally. |
+| Reconciler | Resolves stale `pending` keys, creates range partitions ahead of need, and runs the retention sweep and archive export. Has **no** downstream write path, structurally. |
+| Operation manifest | Versioned configuration, one file per `resource_type`, declaring operation classes, scope selectors, the conflict window, enforcement, the error classification and the probe path. Polled from disk and reloadable without a deploy; its activations are recorded. |
 | Downstream DB / API | The system of record the write is applied to. |
 
 The most consequential change from PRD §6: the intent log moved into Postgres

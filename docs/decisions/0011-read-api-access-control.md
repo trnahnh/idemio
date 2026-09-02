@@ -1,6 +1,6 @@
 # ADR-0011: Scope read APIs by role and redact payloads by default
 
-- **Status:** Accepted
+- **Status:** Accepted; the default-window clause is superseded by [ADR-0017](0017-read-api-time-bounds-are-mandatory.md)
 - **Date:** 2026-09-01
 - **Phase:** cross-cutting
 

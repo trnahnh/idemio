@@ -10,7 +10,7 @@ are demonstrated. Each criterion below is written so that it can be answered yes
 
 | Phase | State |
 |---|---|
-| Phase 0 — core guarantee | **In progress.** Criteria 1–4 demonstrated against the fake downstream's execution ledger. 5 measured under concurrent load: the budget holds to ~600 writes/sec on one machine, though not yet at real traffic. 6 has rules as code but no drill. Everything outstanding needs a deployment target, not code. |
+| Phase 0 — core guarantee | **In progress.** Criteria 1–4 demonstrated against the fake downstream's execution ledger. 5 measured under concurrent load: the budget holds to ~600 writes/sec on one machine, though not yet at real traffic. 6 drilled end to end against the containerised binary, asserted on what reached a receiver; the last hop is a test sink, not a pager. Everything outstanding needs a deployment target, not code. |
 | Phase 1 — intent log and conflict detection | **In progress.** Criteria 1–4, 6 and 7 demonstrated; 5 demonstrated for the write-path half only. Conflict enforcement ships off by default. |
 | Phase 2 — horizontal scale-out | Not started |
 | Phase 3 — full onboarding and abuse detection | Not started |

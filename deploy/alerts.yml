@@ -1,0 +1,103 @@
+groups:
+  - name: idemio-correctness
+    rules:
+      - alert: IdemioIndeterminateKeys
+        expr: idemio_indeterminate_keys > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $value }} writes have an outcome nobody knows"
+          description: >-
+            An indeterminate key may or may not have executed downstream. It is terminal and
+            not re-claimable, so the agent has stopped and a human must determine the truth.
+            The correct standing value is zero. Follow "Resolving an indeterminate key" in
+            DEPLOYMENT_CHECKLIST.md. Do not guess: failed means provably no side effect.
+
+      - alert: IdemioStalePendingKeys
+        expr: idemio_oldest_pending_age_seconds > idemio_reconcile_stale_after_seconds
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Oldest pending key is {{ $value }}s old, past the configured stale window"
+          description: >-
+            The reconciler is not keeping up, or is not running. Pending keys past this age
+            should have been probed and resolved. The threshold is read from
+            idemio_reconcile_stale_after_seconds rather than restated here, so it cannot
+            drift from the running configuration.
+
+      - alert: IdemioProbeFailing
+        expr: rate(idemio_probe_failures_total[10m]) > 0
+        for: 15m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Probe for {{ $labels.resource_type }} is unreachable"
+          description: >-
+            Crash recovery for this write path is degrading toward manual. Probe failures
+            leave keys pending rather than escalating them, so expect
+            IdemioStalePendingKeys to follow if this persists. One incident, not two.
+
+      - alert: IdemioEscalatingToIndeterminate
+        expr: increase(idemio_reconciled_total{outcome="indeterminate"}[1h]) > 0
+        labels:
+          severity: warn
+        annotations:
+          summary: "Reconciler escalated {{ $value }} keys to indeterminate in the last hour"
+          description: >-
+            The reconciler could not determine whether these writes landed. Each one becomes
+            manual work. Investigate before the standing count triggers IdemioIndeterminateKeys.
+
+  - name: idemio-capacity
+    rules:
+      - alert: IdemioPartitionHeadroomLow
+        expr: idemio_partition_headroom_seconds < 4 * 7 * 24 * 3600
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.table }} has under four weeks of partitions"
+          description: >-
+            A missing range partition is a hard write-path outage, not a degradation. Note
+            that cmd/idemio refuses to boot below two weeks, so a deploy will start failing
+            before writes do.
+
+      - alert: IdemioClaimCollisionsHigh
+        expr: >-
+          rate(idemio_claim_collisions_total[30m])
+            / clamp_min(rate(idemio_writes_total[30m]), 0.001) > 0.01
+        for: 30m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Claim collisions above 1% of writes"
+          description: >-
+            One of the two ADR-0010 triggers for consistent-hash routing. This is a signal to
+            read, not to act on immediately; the ADR asks for sustained history before
+            routing is adopted.
+
+      - alert: IdemioReclaimTailHigh
+        expr: histogram_quantile(0.99, rate(idemio_reclaim_attempts_bucket[1h])) > 5
+        for: 30m
+        labels:
+          severity: warn
+        annotations:
+          summary: "p99 re-claim attempt is {{ $value }}"
+          description: >-
+            Individual keys are being re-claimed repeatedly, which suggests a flapping
+            downstream rather than ordinary retry traffic. The tail is the signal here; a
+            high overall rate with a low tail is normal.
+
+  - name: idemio-contract
+    rules:
+      - alert: IdemioHashMismatches
+        expr: rate(idemio_hash_mismatches_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Agent {{ $labels.agent_id }} is reusing keys across different bodies"
+          description: >-
+            A client bug, never silently executed. Hashing is canonical per ADR-0003, so a
+            legitimate retry that re-serialises its JSON will not trigger this.

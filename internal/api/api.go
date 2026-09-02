@@ -387,6 +387,10 @@ func (s *Server) writeExisting(w http.ResponseWriter, key string, record claim.R
 			"retry_after_ms":  retryAfter.Milliseconds(),
 		})
 	case claim.StatusRejected:
+		if len(record.Result) == 0 {
+			writeProblem(w, http.StatusConflict, key, "conflicting_write", record.OutcomeDetail)
+			return
+		}
 		writeRaw(w, http.StatusConflict, record.Result)
 	case claim.StatusIndeterminate:
 		writeJSON(w, http.StatusBadGateway, map[string]any{

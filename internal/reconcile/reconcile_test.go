@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/trnahnh/idemio/internal/claim"
+	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/correlation"
 	"github.com/trnahnh/idemio/internal/faketest"
 	"github.com/trnahnh/idemio/internal/probe"
@@ -46,7 +47,10 @@ func quietLogger() *slog.Logger {
 }
 
 func metricsFor(pool *pgxpool.Pool) *telemetry.Metrics {
-	return telemetry.New(pool, 65536, quietLogger())
+	return telemetry.New(pool, config.Config{
+		ResultInlineBytes:   65536,
+		ReconcileStaleAfter: staleAfter,
+	}, quietLogger())
 }
 
 func claimPending(t *testing.T, pool *pgxpool.Pool, resourceType string) {

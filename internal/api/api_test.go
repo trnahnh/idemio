@@ -66,7 +66,7 @@ func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) 
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	client := downstream.New(fake.DataURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout)
-	metrics := telemetry.New(pool, cfg.ResultInlineBytes, logger)
+	metrics := telemetry.New(pool, cfg, logger)
 	server := httptest.NewServer(api.New(cfg, pool, client, metrics, logger).Routes())
 	t.Cleanup(server.Close)
 

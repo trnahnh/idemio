@@ -169,7 +169,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		s.writeExisting(w, key, s.awaitCompletion(r.Context(), result.Record))
 	default:
 		if result.Record.AttemptCount > 1 {
-			s.metrics.Reclaims.Inc()
+			s.metrics.ReclaimAttempts.Observe(float64(result.Record.AttemptCount))
 		}
 		s.execute(r, w, key, req, operationClass, result)
 	}

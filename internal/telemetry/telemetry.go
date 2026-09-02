@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/trnahnh/idemio/internal/config"
 )
 
 type Metrics struct {
@@ -21,19 +23,19 @@ type Metrics struct {
 	Responses       *prometheus.CounterVec
 	Replays         prometheus.Counter
 	ClaimCollisions prometheus.Counter
-	Reclaims        prometheus.Counter
 	HashMismatches  *prometheus.CounterVec
 	OversizedResult prometheus.Counter
 	ProbeFailures   *prometheus.CounterVec
 	Reconciled      *prometheus.CounterVec
 
 	DownstreamDuration *prometheus.HistogramVec
+	ReclaimAttempts    prometheus.Histogram
 }
 
-func New(pool *pgxpool.Pool, resultInlineBytes int64, logger *slog.Logger) *Metrics {
+func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *Metrics {
 	m := &Metrics{
 		registry:          prometheus.NewRegistry(),
-		resultInlineBytes: resultInlineBytes,
+		resultInlineBytes: cfg.ResultInlineBytes,
 	}
 
 	m.Writes = m.counterVec("idemio_writes_total",
@@ -44,8 +46,10 @@ func New(pool *pgxpool.Pool, resultInlineBytes int64, logger *slog.Logger) *Metr
 		"Replays served from a stored result. A high rate is the system working.")
 	m.ClaimCollisions = m.counter("idemio_claim_collisions_total",
 		"Claims that hit an existing key. An ADR-0010 routing trigger above 1% of writes.")
-	m.Reclaims = m.counter("idemio_reclaims_total",
-		"Re-claims of keys previously left failed.")
+	m.ReclaimAttempts = m.histogram("idemio_reclaim_attempts",
+		"Attempt number at each re-claim of a key previously left failed. The tail is the "+
+			"signal: one key retried many times is a flapping downstream.",
+		[]float64{1, 2, 3, 5, 8, 13, 21, 34})
 	m.HashMismatches = m.counterVec("idemio_hash_mismatches_total",
 		"Reused keys carrying a different request body, by agent.", "agent_id")
 	m.OversizedResult = m.counter("idemio_oversized_results_total",
@@ -56,6 +60,11 @@ func New(pool *pgxpool.Pool, resultInlineBytes int64, logger *slog.Logger) *Metr
 		"Stale pending keys resolved by the reconciler, by outcome.", "outcome")
 	m.DownstreamDuration = m.histogramVec("idemio_downstream_duration_seconds",
 		"Downstream call latency by disposition.", "disposition")
+
+	staleAfter := m.gauge("idemio_reconcile_stale_after_seconds",
+		"The configured reconcile.stale_after. Alert rules compare the pending age against "+
+			"this rather than restating the threshold.")
+	staleAfter.Set(cfg.ReconcileStaleAfter.Seconds())
 
 	m.registry.MustRegister(&databaseCollector{pool: pool, logger: logger})
 	m.names = append(m.names,
@@ -84,6 +93,20 @@ func (m *Metrics) counter(name, help string) prometheus.Counter {
 	m.registry.MustRegister(c)
 	m.names = append(m.names, name)
 	return c
+}
+
+func (m *Metrics) gauge(name, help string) prometheus.Gauge {
+	g := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: help})
+	m.registry.MustRegister(g)
+	m.names = append(m.names, name)
+	return g
+}
+
+func (m *Metrics) histogram(name, help string, buckets []float64) prometheus.Histogram {
+	h := prometheus.NewHistogram(prometheus.HistogramOpts{Name: name, Help: help, Buckets: buckets})
+	m.registry.MustRegister(h)
+	m.names = append(m.names, name)
+	return h
 }
 
 func (m *Metrics) counterVec(name, help string, labels ...string) *prometheus.CounterVec {

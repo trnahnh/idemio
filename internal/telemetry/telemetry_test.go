@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/telemetry"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
@@ -35,7 +36,7 @@ func documented(t *testing.T) []string {
 
 func TestDocumentedMetricsMatchTheRegistry(t *testing.T) {
 	pool := testdb.New(t)
-	exported := telemetry.New(pool, 65536, nil).Names()
+	exported := telemetry.New(pool, config.Config{ResultInlineBytes: 65536}, nil).Names()
 	inDoc := documented(t)
 
 	for _, name := range exported {
@@ -83,6 +84,45 @@ func TestEveryDocumentedMetricCarriesAnAlert(t *testing.T) {
 		if strings.TrimSpace(columns[4]) == "" {
 			t.Errorf("%s has no alert or disposition recorded; a metric nobody acts on "+
 				"is not observability", strings.TrimSpace(columns[1]))
+		}
+	}
+}
+
+const alertRules = "../../deploy/alerts.yml"
+
+// An alert rule naming a metric that does not exist never fires, which is the failure mode
+// that looks exactly like "nothing is wrong".
+func TestAlertRulesOnlyReferenceExportedMetrics(t *testing.T) {
+	raw, err := os.ReadFile(alertRules)
+	if err != nil {
+		t.Fatalf("read %s: %v", alertRules, err)
+	}
+
+	pool := testdb.New(t)
+	exported := telemetry.New(pool, config.Config{ResultInlineBytes: 65536}, nil).Names()
+
+	for _, referenced := range metricName.FindAllString(string(raw), -1) {
+		base := strings.TrimSuffix(strings.TrimSuffix(referenced, "_bucket"), "_count")
+		if !slices.Contains(exported, base) {
+			t.Errorf("%s alerts on %s, which the process does not export", alertRules, referenced)
+		}
+	}
+}
+
+func TestEveryPagingSignalHasAnAlert(t *testing.T) {
+	raw, err := os.ReadFile(alertRules)
+	if err != nil {
+		t.Fatalf("read %s: %v", alertRules, err)
+	}
+	rules := string(raw)
+
+	for _, required := range []string{
+		"idemio_indeterminate_keys",
+		"idemio_oldest_pending_age_seconds",
+		"idemio_partition_headroom_seconds",
+	} {
+		if !strings.Contains(rules, required) {
+			t.Errorf("%s carries no alert, but SYSTEM_DESIGN says it pages", required)
 		}
 	}
 }

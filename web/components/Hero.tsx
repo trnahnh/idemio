@@ -17,10 +17,10 @@ export function Hero() {
           <span className="font-mono text-sm tracking-tight">idemio</span>
         </div>
         <div className="flex items-center gap-6 text-sm">
-          <a href="#how" className="hidden text-muted transition-colors hover:text-text sm:block">
+          <a href="#how" className="hidden py-1.5 text-muted transition-colors hover:text-text sm:block">
             How it works
           </a>
-          <a href="#measured" className="hidden text-muted transition-colors hover:text-text sm:block">
+          <a href="#measured" className="hidden py-1.5 text-muted transition-colors hover:text-text sm:block">
             Measured
           </a>
           <a

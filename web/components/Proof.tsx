@@ -94,7 +94,7 @@ export function Proof() {
               max={32}
               value={concurrency}
               onChange={(e) => setConcurrency(Number(e.target.value))}
-              className="h-1 w-full max-w-xs cursor-pointer appearance-none rounded-full bg-ink-700 accent-accent"
+              className="h-6 w-full max-w-xs cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-ink-700 [&::-webkit-slider-thumb]:mt-[-6px] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent [&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-ink-700 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-accent"
             />
             <span className="font-mono text-lg tabular-nums text-accent">{concurrency}</span>
           </div>
@@ -175,11 +175,11 @@ export function Proof() {
                       ? "201"
                       : "200"}
                 </span>
-                <span className="text-[10px] opacity-60 tabular-nums">
+                <span className="text-[11px] opacity-60 tabular-nums">
                   {a.at ? `${a.at}ms` : ""}
                 </span>
               </div>
-              <div className="mt-1 truncate text-[10px] opacity-70">
+              <div className="mt-1 truncate text-[11px] opacity-70">
                 {a.outcome === "pending"
                   ? "in flight"
                   : a.outcome === "created"
@@ -195,7 +195,7 @@ export function Proof() {
                   className="rounded-lg border border-dashed border-line px-2.5 py-2 font-mono text-[11px] text-dim/40"
                 >
                   <div>—</div>
-                  <div className="mt-1 text-[10px]">idle</div>
+                  <div className="mt-1 text-[11px]">idle</div>
                 </li>
               ))
             : null}
@@ -233,7 +233,7 @@ function Metric({
 
   return (
     <div className="bg-ink-900 p-5 sm:p-6">
-      <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-dim sm:text-[11px]">
+      <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-dim">
         {label}
       </div>
       <div className={`mt-2 font-mono text-3xl tabular-nums sm:text-4xl ${color}`}>{value}</div>

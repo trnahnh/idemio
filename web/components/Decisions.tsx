@@ -15,7 +15,7 @@ export function Decisions() {
 
           <div className="mt-4 space-y-4">
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-dim">
+              <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-dim">
                 the decision said
               </div>
               <p className="mt-1.5 text-sm leading-relaxed text-muted line-through decoration-bad/40 decoration-1">
@@ -24,7 +24,7 @@ export function Decisions() {
             </div>
 
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-dim">
+              <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-dim">
                 the code showed
               </div>
               <p className="mt-1.5 text-sm leading-relaxed">{d.found}</p>

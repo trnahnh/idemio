@@ -13,7 +13,7 @@ export function Flow() {
         <Reveal as="li" key={s.step} delay={i * 60} className="relative flex gap-5 pb-10 sm:gap-7">
           <div className="relative z-10 shrink-0">
             <div
-              className={`flex h-8 w-8 items-center justify-center rounded-full border font-mono text-[10px] sm:h-10 sm:w-10 sm:text-[11px] ${
+              className={`flex h-8 w-8 items-center justify-center rounded-full border font-mono text-[11px] sm:h-10 sm:w-10 ${
                 s.accent
                   ? "border-accent/60 bg-accent-dim text-accent"
                   : "border-line-strong bg-ink-900 text-muted"

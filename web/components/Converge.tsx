@@ -89,7 +89,7 @@ export function Converge() {
         </svg>
 
         <div
-          className="pointer-events-none absolute font-mono text-[10px] leading-tight sm:text-[11px]"
+          className="pointer-events-none absolute font-mono text-[11px] leading-tight"
           style={{ left: `${gate * 100}%`, top: 0, transform: "translateX(-50%)" }}
         >
           <span className="whitespace-nowrap text-accent">unique (agent_id, key)</span>
@@ -98,19 +98,19 @@ export function Converge() {
 
       <dl className="mt-6 grid grid-cols-3 gap-3 border-t border-line pt-5 sm:gap-6">
         <div>
-          <dt className="font-mono text-[10px] uppercase tracking-wider text-dim sm:text-[11px]">
+          <dt className="font-mono text-[11px] uppercase tracking-wider text-dim">
             Requests
           </dt>
           <dd className="mt-1 font-mono text-xl tabular-nums sm:text-2xl">9</dd>
         </div>
         <div>
-          <dt className="font-mono text-[10px] uppercase tracking-wider text-dim sm:text-[11px]">
+          <dt className="font-mono text-[11px] uppercase tracking-wider text-dim">
             Claims won
           </dt>
           <dd className="mt-1 font-mono text-xl tabular-nums text-accent sm:text-2xl">1</dd>
         </div>
         <div>
-          <dt className="font-mono text-[10px] uppercase tracking-wider text-dim sm:text-[11px]">
+          <dt className="font-mono text-[11px] uppercase tracking-wider text-dim">
             Executions
           </dt>
           <dd className="mt-1 font-mono text-xl tabular-nums text-ok sm:text-2xl">1</dd>

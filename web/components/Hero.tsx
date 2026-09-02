@@ -1,6 +1,7 @@
 import { headline, repo } from "@/lib/content";
 import { Reveal } from "./Reveal";
 import { Converge } from "./Converge";
+import { Jump } from "./Jump";
 
 export function Hero() {
   return (
@@ -17,12 +18,12 @@ export function Hero() {
           <span className="font-mono text-sm tracking-tight">idemio</span>
         </div>
         <div className="flex items-center gap-6 text-sm">
-          <a href="#how" className="hidden py-1.5 text-muted transition-colors hover:text-text sm:block">
+          <Jump to="how" className="hidden py-1.5 text-muted transition-colors hover:text-text sm:block">
             How it works
-          </a>
-          <a href="#measured" className="hidden py-1.5 text-muted transition-colors hover:text-text sm:block">
+          </Jump>
+          <Jump to="measured" className="hidden py-1.5 text-muted transition-colors hover:text-text sm:block">
             Measured
-          </a>
+          </Jump>
           <a
             href={repo}
             target="_blank"
@@ -67,12 +68,12 @@ export function Hero() {
                 →
               </span>
             </a>
-            <a
-              href="#proof"
+            <Jump
+              to="proof"
               className="inline-flex items-center justify-center gap-2 rounded-full border border-line-strong px-6 py-3 text-sm text-muted transition-colors hover:border-line-strong hover:text-text"
             >
               See the guarantee
-            </a>
+            </Jump>
           </div>
         </Reveal>
 

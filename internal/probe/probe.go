@@ -25,10 +25,13 @@ type Verdict struct {
 	Result     json.RawMessage
 }
 
-func (c *Client) Executions(ctx context.Context, agentID, key string) (Verdict, error) {
+// The path is declared per resource_type in the manifest. A single hard-coded path would
+// make that declaration decorative and silently wrong for the first integration that needs
+// a different one.
+func (c *Client) Executions(ctx context.Context, path, agentID, key string) (Verdict, error) {
 	query := url.Values{}
 	query.Set("correlation_id", correlation.ID(agentID, key))
-	target := c.baseURL + "/probe?" + query.Encode()
+	target := c.baseURL + path + "?" + query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -79,8 +82,8 @@ func (o Outcome) String() string {
 	}
 }
 
-func (c *Client) Probe(ctx context.Context, agentID, key string) (Outcome, json.RawMessage, error) {
-	verdict, err := c.Executions(ctx, agentID, key)
+func (c *Client) Probe(ctx context.Context, path, agentID, key string) (Outcome, json.RawMessage, error) {
+	verdict, err := c.Executions(ctx, path, agentID, key)
 	if err != nil {
 		return Unknown, nil, err
 	}

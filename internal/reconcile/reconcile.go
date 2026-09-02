@@ -18,7 +18,7 @@ import (
 const defaultBatch = 200
 
 type Prober interface {
-	Probe(ctx context.Context, agentID, key string) (probe.Outcome, json.RawMessage, error)
+	Probe(ctx context.Context, path, agentID, key string) (probe.Outcome, json.RawMessage, error)
 }
 
 type Reconciler struct {
@@ -125,12 +125,13 @@ func (r *Reconciler) staleKeys(ctx context.Context) ([]stale, error) {
 }
 
 func (r *Reconciler) resolve(ctx context.Context, candidate stale, summary *Summary) {
-	if _, registered := r.manifests.Current().Lookup(candidate.resourceType); !registered {
+	definition, registered := r.manifests.Current().Lookup(candidate.resourceType)
+	if !registered {
 		r.escalate(ctx, candidate, "no_probe_registered", summary)
 		return
 	}
 
-	outcome, result, err := r.prober.Probe(ctx, candidate.agentID, candidate.key)
+	outcome, result, err := r.prober.Probe(ctx, definition.ProbePath, candidate.agentID, candidate.key)
 	if err != nil {
 		summary.Unresolved++
 		r.metrics.ProbeFailures.WithLabelValues(candidate.resourceType).Inc()

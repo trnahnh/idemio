@@ -63,6 +63,7 @@ func (f *fake) dataMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/execute", f.handleExecute)
 	mux.HandleFunc("GET /probe", f.handleProbe)
+	mux.HandleFunc("GET /probe/subscription", f.handleProbe)
 	return mux
 }
 

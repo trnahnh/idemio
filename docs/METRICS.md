@@ -19,11 +19,12 @@ incremented, so a restart cannot lose them and two replicas cannot double-count.
 | Metric | Type | Labels | Alert | Source |
 |---|---|---|---|---|
 | `idemio_indeterminate_keys` | gauge | — | **Page on any sustained non-zero value.** The correct value is zero; each key is a possible unresolved side effect requiring a human. | [ADR-0005](decisions/0005-downstream-outcome-taxonomy.md), [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
-| `idemio_oldest_pending_age_seconds` | gauge | — | **Page** above `reconcile.stale_after`. The reconciler is not keeping up. The threshold must be kept in step with the configured value; see the gap noted below. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
+| `idemio_oldest_pending_age_seconds` | gauge | — | **Page** when it exceeds `idemio_reconcile_stale_after_seconds`. The reconciler is not keeping up. The rule compares two metrics rather than restating the threshold, so raising the configured value cannot leave a stale alert behind. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
 | `idemio_pending_keys` | gauge | — | Informational. Context for the age gauge — one very old key reads differently from thousands. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
+| `idemio_reconcile_stale_after_seconds` | gauge | — | Never alerted on directly. Exported so the stale-`pending` rule can reference the configured threshold instead of duplicating it. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
 | `idemio_probe_failures_total` | counter | `resource_type` | Warn. Crash recovery for that path is degrading toward manual. Failures leave keys `pending` rather than escalating, so this rising while `idemio_oldest_pending_age_seconds` climbs is one incident, not two. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
 | `idemio_reconciled_total` | counter | `outcome` (`done`, `failed`, `indeterminate`) | Warn on rising `indeterminate`. This is the reconciler's own account of what it escalated. | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) |
-| `idemio_reclaims_total` | counter | — | Warn on a rising rate; suggests a flapping downstream. **Does not fully serve its signal** — see *Known gaps*. | [ADR-0002](decisions/0002-key-scope-and-status-lifecycle.md) |
+| `idemio_reclaim_attempts` | histogram | — | Warn on a rising **tail**, not on the rate. One key re-claimed forty times is a flapping downstream; forty keys re-claimed once each is normal traffic. `_count` still gives the rate. | [ADR-0002](decisions/0002-key-scope-and-status-lifecycle.md) |
 | `idemio_writes_total` | counter | `status` (`done`, `failed`, `indeterminate`) | The rate of `indeterminate` is the leading indicator; `idemio_indeterminate_keys` is the standing debt. | [ADR-0005](decisions/0005-downstream-outcome-taxonomy.md) |
 
 ## Contract health
@@ -57,18 +58,6 @@ than an oversight.
 | Key expiry sweep lag vs. ingest | The retention sweep. If it falls behind ingest the hot table grows without bound. | 1 |
 
 ## Known gaps
-
-**`idemio_reclaims_total` does not answer its own question.** SYSTEM_DESIGN asks for re-claims
-per key so a *high tail* can be alerted on — one key retried forty times is a flapping
-downstream, forty keys retried once each is normal. The counter is global and has no
-distribution, so the tail is invisible. Fixing it means a histogram over `attempt_count` at
-re-claim time. Recorded rather than quietly left as though the signal were covered.
-
-**`idemio_oldest_pending_age_seconds` duplicates a threshold.** The alert compares the gauge
-against `reconcile.stale_after`, which lives in the process configuration. Nothing checks the
-two agree, so raising the configured value without editing the alert rule produces a page on
-every healthy in-flight write. Exporting the configured value as its own gauge would let the
-rule reference it instead of restating it.
 
 **`idemio_hash_mismatches_total` is labelled by `agent_id`.** SYSTEM_DESIGN asks for the
 `422` rate per agent and this is the honest reading of that. It is also unbounded cardinality

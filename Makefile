@@ -8,7 +8,7 @@ export IDEMIO_TEST_POOLED_ADDR
 export IDEMIO_TEST_KAFKA_BROKERS
 export IDEMIO_TEST_ARCHIVE_ENDPOINT
 
-.PHONY: up down test verify load fmt vet
+.PHONY: up down test verify load observe drill fmt vet
 
 up:
 	docker compose up -d --wait
@@ -30,6 +30,17 @@ verify: fmt vet test
 # IDEMIO_LOAD_RATE, IDEMIO_LOAD_SECONDS and IDEMIO_LOAD_RESOURCES.
 load:
 	go test -tags loadtest ./internal/api/ -run TestWritePathUnderConcurrentLoad -count=1 -v -timeout 20m
+
+# The deployed binaries plus Prometheus, Alertmanager and Grafana. Off by default: the test
+# suite talks to Postgres, the broker and object storage directly and needs none of it.
+# Grafana is on :3000, Prometheus :9091, Alertmanager :9093.
+observe:
+	docker compose --profile observe up -d --build
+
+# ROADMAP Phase 0 exit criterion 6. Forces an indeterminate key against the deployed binary
+# and asserts the alert reached a receiver, not merely that the rule evaluated.
+drill: observe
+	go test -tags drill ./internal/drill/ -count=1 -v -timeout 10m
 
 fmt:
 	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }

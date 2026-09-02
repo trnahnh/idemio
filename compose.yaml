@@ -69,6 +69,95 @@ services:
     volumes:
       - miniodata:/data
 
+  # Everything below is the `observe` profile: the deployed binaries plus the monitoring
+  # stack they are scraped by. `docker compose up -d --wait` leaves it alone, because the
+  # test suite talks to Postgres, the broker and object storage directly and needs none of it.
+  fakedownstream:
+    profiles: ["observe"]
+    build: .
+    entrypoint: ["/usr/local/bin/fakedownstream"]
+    command: ["-ledger", "/tmp/ledger.jsonl", "-data-addr", "0.0.0.0:8081", "-control-addr", "0.0.0.0:8082"]
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+
+  idemio:
+    profiles: ["observe"]
+    build: .
+    environment:
+      IDEMIO_DATABASE_URL: postgres://idemio:idemio@postgres:5432/idemio
+      IDEMIO_DOWNSTREAM_BASE_URL: http://fakedownstream:8081
+      IDEMIO_AUTH_MODE: trusted_header
+      IDEMIO_LISTEN_ADDR: 0.0.0.0:8080
+      IDEMIO_MANIFEST_DIR: /etc/idemio/manifests
+      IDEMIO_DOWNSTREAM_TIMEOUT_MS: 2000
+      IDEMIO_RECONCILE_STALE_AFTER: 30s
+      IDEMIO_RECONCILE_INTERVAL: 5s
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  reconciler:
+    profiles: ["observe"]
+    build: .
+    entrypoint: ["/usr/local/bin/reconciler"]
+    environment:
+      IDEMIO_DATABASE_URL: postgres://idemio:idemio@postgres:5432/idemio
+      IDEMIO_DOWNSTREAM_BASE_URL: http://fakedownstream:8081
+      IDEMIO_AUTH_MODE: trusted_header
+      IDEMIO_METRICS_ADDR: 0.0.0.0:9090
+      IDEMIO_MANIFEST_DIR: /etc/idemio/manifests
+      IDEMIO_DOWNSTREAM_TIMEOUT_MS: 2000
+      IDEMIO_RECONCILE_STALE_AFTER: 30s
+      IDEMIO_RECONCILE_INTERVAL: 5s
+    restart: unless-stopped
+    depends_on:
+      idemio:
+        condition: service_started
+
+  alertsink:
+    profiles: ["observe"]
+    build: .
+    entrypoint: ["/usr/local/bin/alertsink"]
+    command: ["-addr", "0.0.0.0:9098"]
+    ports:
+      - "9098:9098"
+
+  prometheus:
+    profiles: ["observe"]
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-lifecycle
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./deploy:/etc/prometheus:ro
+
+  alertmanager:
+    profiles: ["observe"]
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    profiles: ["observe"]
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
 volumes:
   pgdata:
   miniodata:

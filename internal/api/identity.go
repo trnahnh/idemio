@@ -9,7 +9,9 @@ const (
 	HeaderAgentID = "X-Idemio-Agent-Id"
 	HeaderRole    = "X-Idemio-Role"
 
-	RoleAgent = "agent"
+	RoleAgent        = "agent"
+	RoleOperator     = "operator"
+	RoleInvestigator = "investigator"
 )
 
 type identity struct {

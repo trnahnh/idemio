@@ -133,6 +133,24 @@ schema could not satisfy its own retention target. Each was resolved as a dated 
 than edited away, so the reasoning stays reviewable in
 [decisions/](docs/decisions/).
 
+**Four of those decisions were later found wrong by the code that implemented them**, and
+each was superseded rather than quietly amended:
+
+- [ADR-0014](docs/decisions/0014-undeclared-operations-rejected-at-admission.md) — ADR-0007's
+  safe default admitted writes whose downstream responses could not be classified, so it
+  manufactured `indeterminate`, the one outcome the system treats as an incident.
+- [ADR-0015](docs/decisions/0015-conflict-check-transaction-shape.md) — ADR-0001 and ADR-0008
+  together never said where the resource lock is taken. Under the natural reading, two
+  conflicting writers each observe the other and *both* lose. The same ADR also found that
+  "serialized" described a lock held for two statements while the downstream call happened
+  outside it, so two same-agent writes would have landed simultaneously with a database row
+  claiming otherwise.
+- [ADR-0016](docs/decisions/0016-partition-maintenance-in-application-code.md) — `pg_partman`
+  would have made partition maintenance the least-tested subsystem with the largest blast
+  radius.
+- [ADR-0017](docs/decisions/0017-read-api-time-bounds-are-mandatory.md) — ADR-0011 required a
+  bounded range *and* a default window, which cannot both be true.
+
 ## License
 
 See [LICENSE](LICENSE).

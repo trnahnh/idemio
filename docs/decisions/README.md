@@ -23,16 +23,21 @@ line to point at it.
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0007](0007-operation-compatibility-matrix.md) | Conflict detection uses a declared per-resource operation compatibility matrix, defaulting to conflict | Accepted |
-| [0008](0008-serialization-via-advisory-locks.md) | Same-agent conflicts serialize on Postgres transaction-scoped advisory locks | Accepted |
-| [0009](0009-partitioning-and-retention.md) | `idempotency_keys` is hash-partitioned to preserve its global unique constraint; `write_intents` is range-partitioned on time and archived by DETACH | Accepted |
+| [0007](0007-operation-compatibility-matrix.md) | Conflict detection uses a declared per-resource operation compatibility matrix, defaulting to conflict | Accepted; fallback clause superseded by 0014 |
+| [0008](0008-serialization-via-advisory-locks.md) | Same-agent conflicts serialize on Postgres transaction-scoped advisory locks | Accepted; lock-timeout response and serialization mechanism superseded by 0015 |
+| [0009](0009-partitioning-and-retention.md) | `idempotency_keys` is hash-partitioned to preserve its global unique constraint; `write_intents` is range-partitioned on time and archived by DETACH | Accepted; `pg_partman` clause superseded by 0016 |
+| [0013](0013-phase-1-implementation-stack.md) | Phase 1 is built on a JSON operation manifest polled from disk, shadow-by-default enforcement, a polling outbox relay in its own binary, Parquet archives, and PgBouncer in transaction mode | Accepted |
+| [0014](0014-undeclared-operations-rejected-at-admission.md) | An undeclared operation is rejected at admission rather than admitted as `replace` | Accepted |
+| [0015](0015-conflict-check-transaction-shape.md) | The resource lock is the claim transaction's first statement; intents that provably did not happen are voided; same-agent conflicts serialize on the outcome | Accepted |
+| [0016](0016-partition-maintenance-in-application-code.md) | Range partitions are maintained by a Go component in `cmd/reconciler`, not by `pg_partman` | Accepted |
 
 ### Phase 2+ and cross-cutting
 
 | ADR | Decision | Status |
 |---|---|---|
 | [0010](0010-consistent-hash-routing-not-raft.md) | Key affinity uses consistent-hash routing; Raft is not adopted | Accepted |
-| [0011](0011-read-api-access-control.md) | Read APIs are role-scoped and redact payloads by default | Accepted |
+| [0011](0011-read-api-access-control.md) | Read APIs are role-scoped and redact payloads by default | Accepted; default-window clause superseded by 0017 |
+| [0017](0017-read-api-time-bounds-are-mandatory.md) | Read endpoints require an explicit `since` and cap the range span | Accepted |
 
 ## Template
 

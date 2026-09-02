@@ -1,6 +1,6 @@
 # ADR-0007: Replace the blanket conflict rule with a compatibility matrix
 
-- **Status:** Accepted
+- **Status:** Accepted; the fallback clause is superseded by [ADR-0014](0014-undeclared-operations-rejected-at-admission.md)
 - **Date:** 2026-09-01
 - **Phase:** 1
 

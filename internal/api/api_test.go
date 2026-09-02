@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +26,8 @@ import (
 	"github.com/trnahnh/idemio/internal/faketest"
 	"github.com/trnahnh/idemio/internal/fixtures"
 	"github.com/trnahnh/idemio/internal/manifest"
+	"github.com/trnahnh/idemio/internal/objectstore"
+	"github.com/trnahnh/idemio/internal/resultstore"
 	"github.com/trnahnh/idemio/internal/telemetry"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
@@ -50,7 +55,61 @@ func newHarness(t *testing.T, downstreamTimeout time.Duration) *harness {
 func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) *harness {
 	t.Helper()
 
-	return build(t, testdb.New(t), downstreamTimeout, pendingWait)
+	return build(t, testdb.New(t), downstreamTimeout, pendingWait, nil, defaultInlineCap)
+}
+
+const defaultInlineCap = 65536
+
+// Results are stored inline unless a test opts into object storage, so every other test
+// exercises the behaviour a deployment without a bucket gets.
+func newOffloadHarness(t *testing.T, inlineCap int64) *harness {
+	t.Helper()
+
+	endpoint := strings.TrimSpace(os.Getenv("IDEMIO_TEST_ARCHIVE_ENDPOINT"))
+	if endpoint == "" {
+		t.Fatal("IDEMIO_TEST_ARCHIVE_ENDPOINT is not set; offload cannot be tested against a stub")
+	}
+
+	objects, err := objectstore.New(context.Background(), objectstore.Options{
+		Endpoint:  endpoint,
+		Bucket:    fmt.Sprintf("idemio-results-%d", time.Now().UnixNano()),
+		AccessKey: envOr("IDEMIO_TEST_ARCHIVE_ACCESS_KEY", "idemio"),
+		SecretKey: envOr("IDEMIO_TEST_ARCHIVE_SECRET_KEY", "idemio-secret"),
+	})
+	if err != nil {
+		t.Fatalf("connect object storage: %v", err)
+	}
+	return build(t, testdb.New(t), 5*time.Second, 0, objects, inlineCap)
+}
+
+type refusingObjects struct{}
+
+func (refusingObjects) Put(context.Context, string, []byte, string) error {
+	return errors.New("object storage is unreachable")
+}
+
+func (refusingObjects) Get(context.Context, string) ([]byte, error) {
+	return nil, errors.New("object storage is unreachable")
+}
+
+func (refusingObjects) Delete(context.Context, ...string) error {
+	return errors.New("object storage is unreachable")
+}
+
+// A store that constructs but refuses every write. Pointing a real client at a dead address
+// fails during construction instead, which would skip the failure path rather than test it.
+func newUnreachableOffloadHarness(t *testing.T, inlineCap int64) *harness {
+	t.Helper()
+
+	return buildWith(t, testdb.New(t), 5*time.Second, 0,
+		resultstore.NewWith(refusingObjects{}, inlineCap), inlineCap)
+}
+
+func envOr(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 // Conflict detection ships shadowed (ADR-0013), so a test that means to exercise rejection
@@ -58,15 +117,32 @@ func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) 
 func newEnforcingHarness(t *testing.T) *harness {
 	t.Helper()
 
-	return build(t, testdb.New(t), 5*time.Second, 0, fixtures.Enforce)
+	return build(t, testdb.New(t), 5*time.Second, 0, nil, defaultInlineCap, fixtures.Enforce)
 }
 
 func build(t *testing.T, pool *pgxpool.Pool, downstreamTimeout, pendingWait time.Duration,
-	patches ...fixtures.Patch) *harness {
+	objects *objectstore.Client, inlineCap int64, patches ...fixtures.Patch) *harness {
 
 	t.Helper()
 
-	fake := faketest.Start(t)
+	return buildWith(t, pool, downstreamTimeout, pendingWait,
+		resultstore.New(objects, inlineCap), inlineCap, patches...)
+}
+
+func buildWith(t *testing.T, pool *pgxpool.Pool, downstreamTimeout, pendingWait time.Duration,
+	results *resultstore.Store, inlineCap int64, patches ...fixtures.Patch) *harness {
+
+	t.Helper()
+
+	return assemble(t, pool, faketest.Start(t), downstreamTimeout, pendingWait, results,
+		inlineCap, patches...)
+}
+
+func assemble(t *testing.T, pool *pgxpool.Pool, fake *faketest.Fake,
+	downstreamTimeout, pendingWait time.Duration, results *resultstore.Store, inlineCap int64,
+	patches ...fixtures.Patch) *harness {
+
+	t.Helper()
 	manifestDir := fixtures.ManifestDir(t, patches...)
 
 	cfg := config.Config{
@@ -78,7 +154,7 @@ func build(t *testing.T, pool *pgxpool.Pool, downstreamTimeout, pendingWait time
 		ReconcileStaleAfter:      10 * time.Second,
 		ReconcileInterval:        time.Second,
 		PayloadBytes:             1024,
-		ResultInlineBytes:        65536,
+		ResultInlineBytes:        inlineCap,
 		OutcomeWriteAttempts:     3,
 		ManifestDir:              manifestDir,
 		ManifestReloadInterval:   time.Hour,
@@ -94,7 +170,7 @@ func build(t *testing.T, pool *pgxpool.Pool, downstreamTimeout, pendingWait time
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	client := downstream.New(fake.DataURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout)
 	metrics := telemetry.New(pool, cfg, logger)
-	server := httptest.NewServer(api.New(cfg, pool, client, manifests, metrics, logger).Routes())
+	server := httptest.NewServer(api.New(cfg, pool, client, manifests, results, metrics, logger).Routes())
 	t.Cleanup(server.Close)
 
 	return &harness{server: server, fake: fake, pool: pool}

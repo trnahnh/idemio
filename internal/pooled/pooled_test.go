@@ -22,6 +22,7 @@ import (
 	"github.com/trnahnh/idemio/internal/faketest"
 	"github.com/trnahnh/idemio/internal/fixtures"
 	"github.com/trnahnh/idemio/internal/manifest"
+	"github.com/trnahnh/idemio/internal/resultstore"
 	"github.com/trnahnh/idemio/internal/telemetry"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
@@ -73,9 +74,10 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	results := resultstore.New(nil, cfg.ResultInlineBytes)
 	client := downstream.New(fake.DataURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout)
 	metrics := telemetry.New(pool, cfg, logger)
-	server := httptest.NewServer(api.New(cfg, pool, client, manifests, metrics, logger).Routes())
+	server := httptest.NewServer(api.New(cfg, pool, client, manifests, results, metrics, logger).Routes())
 	t.Cleanup(server.Close)
 
 	return &harness{server: server, fake: fake, pool: pool}

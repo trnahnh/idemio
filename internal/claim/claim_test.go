@@ -130,7 +130,7 @@ func TestFailedKeyIsReclaimable(t *testing.T) {
 		t.Fatalf("first claim: %v", err)
 	}
 	completed, err := claim.Complete(ctx, pool, "agent-checkout-flow", keyA,
-		claim.StatusFailed, nil, "downstream_unreachable")
+		claim.StatusFailed, nil, "", "downstream_unreachable")
 	if err != nil {
 		t.Fatalf("mark failed: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestTerminalStatusesAreNotReclaimable(t *testing.T) {
 				t.Fatalf("first claim: %v", err)
 			}
 			if _, err := claim.Complete(ctx, pool, "agent-checkout-flow", keyA, status,
-				json.RawMessage(`{"charge_id":"ch_5521"}`), ""); err != nil {
+				json.RawMessage(`{"charge_id":"ch_5521"}`), "", ""); err != nil {
 				t.Fatalf("complete as %s: %v", status, err)
 			}
 
@@ -195,12 +195,12 @@ func TestCompleteWillNotOverwriteATerminalOutcome(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 	if _, err := claim.Complete(ctx, pool, "agent-checkout-flow", keyA, claim.StatusDone,
-		json.RawMessage(`{"charge_id":"ch_5521"}`), ""); err != nil {
+		json.RawMessage(`{"charge_id":"ch_5521"}`), "", ""); err != nil {
 		t.Fatalf("first complete: %v", err)
 	}
 
 	updated, err := claim.Complete(ctx, pool, "agent-checkout-flow", keyA,
-		claim.StatusIndeterminate, nil, "late writer")
+		claim.StatusIndeterminate, nil, "", "late writer")
 	if err != nil {
 		t.Fatalf("second complete: %v", err)
 	}

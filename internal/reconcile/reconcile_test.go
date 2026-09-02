@@ -62,7 +62,7 @@ func TestTheProbePathComesFromTheManifest(t *testing.T) {
 		backdate(t, pool, 2*staleAfter)
 
 		prober := &pathRecordingProber{}
-		_, err := reconcile.New(pool, prober, manifests, staleAfter, metricsFor(pool), quietLogger()).
+		_, err := reconcile.New(pool, prober, manifests, nil, staleAfter, metricsFor(pool), quietLogger()).
 			Sweep(context.Background())
 		if err != nil {
 			t.Fatalf("sweep: %v", err)
@@ -132,7 +132,7 @@ func TestProbeFindingAnExecutionResolvesToDone(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.Executed, result: json.RawMessage(`{"sequence":1}`)}
-	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestProbeFindingNoExecutionResolvesToFailed(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.NotExecuted}
-	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if got := statusOf(t, pool); got != claim.StatusFailed {
@@ -164,7 +164,7 @@ func TestUnknownProbeResultEscalatesToIndeterminate(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.Unknown}
-	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if got := statusOf(t, pool); got != claim.StatusIndeterminate {
@@ -178,7 +178,7 @@ func TestUnprobeableResourceEscalatesToIndeterminate(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.Executed}
-	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if got := statusOf(t, pool); got != claim.StatusIndeterminate {
@@ -192,7 +192,7 @@ func TestUnreachableProbeLeavesTheKeyPending(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{err: errors.New("connection refused")}
-	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestFreshPendingKeysAreNotSwept(t *testing.T) {
 	claimPending(t, pool, "invoice")
 
 	prober := stubProber{outcome: probe.NotExecuted}
-	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestSweepResolvesFromTheDownstreamLedgerWithoutReExecuting(t *testing.T) {
 	}
 
 	prober := probe.New(fake.DataURL, 3*time.Second)
-	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), nil, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 

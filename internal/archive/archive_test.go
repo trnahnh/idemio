@@ -14,12 +14,13 @@ import (
 
 	"github.com/trnahnh/idemio/internal/archive"
 	"github.com/trnahnh/idemio/internal/maintenance"
+	"github.com/trnahnh/idemio/internal/objectstore"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
 
 const endpointEnv = "IDEMIO_TEST_ARCHIVE_ENDPOINT"
 
-func options(t *testing.T) archive.Options {
+func options(t *testing.T) objectstore.Options {
 	t.Helper()
 
 	endpoint := strings.TrimSpace(os.Getenv(endpointEnv))
@@ -29,7 +30,7 @@ func options(t *testing.T) archive.Options {
 			"deletion with extra steps.", endpointEnv)
 	}
 
-	return archive.Options{
+	return objectstore.Options{
 		Endpoint:  endpoint,
 		Bucket:    fmt.Sprintf("idemio-test-%d", time.Now().UnixNano()),
 		AccessKey: envOr("IDEMIO_TEST_ARCHIVE_ACCESS_KEY", "idemio"),
@@ -84,10 +85,11 @@ func TestAnExpiredPartitionSurvivesArchiveAndRestore(t *testing.T) {
 	const rows = 25
 	seedOldPartition(t, pool, rows)
 
-	archiver, err := archive.New(ctx, pool, options(t))
+	objects, err := objectstore.New(ctx, options(t))
 	if err != nil {
-		t.Fatalf("connect archive: %v", err)
+		t.Fatalf("connect object storage: %v", err)
 	}
+	archiver := archive.New(pool, objects)
 
 	retention := maintenance.Retention{
 		Keys:          90 * 24 * time.Hour,
@@ -156,11 +158,11 @@ func TestAnExpiredPartitionSurvivesArchiveAndRestore(t *testing.T) {
 func TestAnUnconfiguredArchiveIsNotAnError(t *testing.T) {
 	pool := testdb.New(t)
 
-	archiver, err := archive.New(context.Background(), pool, archive.Options{})
+	objects, err := objectstore.New(context.Background(), objectstore.Options{})
 	if err != nil {
-		t.Fatalf("new archive: %v", err)
+		t.Fatalf("new object store: %v", err)
 	}
-	if archiver != nil {
+	if archiver := archive.New(pool, objects); archiver != nil {
 		t.Fatal("an archive was built with no endpoint; retention would drop into nothing")
 	}
 }

@@ -186,7 +186,7 @@ func TestAFailedWriteStopsBlockingTheWindow(t *testing.T) {
 
 	mustClaim(t, pool, writer{agent: "agent-a", key: key(1), class: manifest.ClassReplace, enforce: true})
 
-	updated, err := claim.Complete(ctx, pool, "agent-a", key(1), claim.StatusFailed, nil, "unreachable")
+	updated, err := claim.Complete(ctx, pool, "agent-a", key(1), claim.StatusFailed, nil, "", "unreachable")
 	if err != nil || !updated {
 		t.Fatalf("complete: updated=%v err=%v", updated, err)
 	}
@@ -205,7 +205,7 @@ func TestAnIndeterminateWriteKeepsBlockingTheWindow(t *testing.T) {
 	mustClaim(t, pool, writer{agent: "agent-a", key: key(1), class: manifest.ClassReplace, enforce: true})
 
 	if _, err := claim.Complete(ctx, pool, "agent-a", key(1),
-		claim.StatusIndeterminate, nil, "unknown"); err != nil {
+		claim.StatusIndeterminate, nil, "", "unknown"); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestSameAgentConflictProceedsOnceTheEarlierWriteIsDone(t *testing.T) {
 
 	mustClaim(t, pool, writer{agent: "agent-a", key: key(1), class: manifest.ClassReplace, enforce: true})
 	if _, err := claim.Complete(ctx, pool, "agent-a", key(1), claim.StatusDone,
-		json.RawMessage(`{"ok":true}`), ""); err != nil {
+		json.RawMessage(`{"ok":true}`), "", ""); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 

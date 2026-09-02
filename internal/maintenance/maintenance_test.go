@@ -2,6 +2,7 @@ package maintenance_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -255,7 +256,7 @@ func TestExpiredKeysAreDeletedAndCurrentOnesSurvive(t *testing.T) {
 		t.Fatalf("insert current key: %v", err)
 	}
 
-	deleted, err := retention().ExpireKeys(ctx, pool, 10*time.Second)
+	deleted, err := retention().ExpireKeys(ctx, pool, nil, 10*time.Second)
 	if err != nil {
 		t.Fatalf("expire keys: %v", err)
 	}
@@ -269,5 +270,70 @@ func TestExpiredKeysAreDeletedAndCurrentOnesSurvive(t *testing.T) {
 	}
 	if remaining != 1 {
 		t.Fatalf("remaining keys = %d, want 1", remaining)
+	}
+}
+
+type recordingDeleter struct{ deleted []string }
+
+func (d *recordingDeleter) Delete(_ context.Context, refs []string) error {
+	d.deleted = append(d.deleted, refs...)
+	return nil
+}
+
+// Offloaded result bodies are Confidential. If the sweep removed the row and left the
+// object, the data would outlive the retention policy that governs it.
+func TestExpiringAKeyAlsoDeletesItsOffloadedResult(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+
+	const insert = `
+		INSERT INTO idempotency_keys
+		    (agent_id, idempotency_key, request_hash, resource_type, resource_id, operation,
+		     status, completed_at, created_at, result_ref)
+		VALUES ($1, gen_random_uuid(), 'sha256-jcs-v1:x', 'invoice', 'inv_1', 'create_charge',
+		        'done', now(), now() - make_interval(days => 200), $2)`
+
+	for i := range 3 {
+		if _, err := pool.Exec(ctx, insert, "agent-old", fmt.Sprintf("results/%d.json", i)); err != nil {
+			t.Fatalf("insert expired key: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, insert, "agent-inline", nil); err != nil {
+		t.Fatalf("insert inline key: %v", err)
+	}
+
+	deleter := &recordingDeleter{}
+	deleted, err := retention().ExpireKeys(ctx, pool, deleter, 10*time.Second)
+	if err != nil {
+		t.Fatalf("expire keys: %v", err)
+	}
+	if deleted != 4 {
+		t.Fatalf("deleted %d rows, want 4", deleted)
+	}
+	if len(deleter.deleted) != 3 {
+		t.Fatalf("deleted %d objects, want 3: %v", len(deleter.deleted), deleter.deleted)
+	}
+}
+
+func TestASweepWithNoResultStoreStillExpiresRows(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO idempotency_keys
+		    (agent_id, idempotency_key, request_hash, resource_type, resource_id, operation,
+		     status, completed_at, created_at)
+		VALUES ('agent-old', gen_random_uuid(), 'sha256-jcs-v1:x', 'invoice', 'inv_1',
+		        'create_charge', 'done', now(), now() - make_interval(days => 200))`)
+	if err != nil {
+		t.Fatalf("insert expired key: %v", err)
+	}
+
+	deleted, err := retention().ExpireKeys(ctx, pool, nil, 10*time.Second)
+	if err != nil {
+		t.Fatalf("expire keys: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted %d rows, want 1", deleted)
 	}
 }

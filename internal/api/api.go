@@ -16,13 +16,14 @@ import (
 	"github.com/trnahnh/idemio/internal/claim"
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/downstream"
+	"github.com/trnahnh/idemio/internal/latency"
 	"github.com/trnahnh/idemio/internal/manifest"
+	"github.com/trnahnh/idemio/internal/resultstore"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
 const (
 	headerIdempotencyKey = "Idempotency-Key"
-	retryAfter           = time.Second
 	pendingPollFloor     = 20 * time.Millisecond
 )
 
@@ -31,18 +32,23 @@ type Server struct {
 	pool       *pgxpool.Pool
 	downstream *downstream.Client
 	manifests  *manifest.Store
+	results    *resultstore.Store
+	latency    *latency.Tracker
 	metrics    *telemetry.Metrics
 	logger     *slog.Logger
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool, client *downstream.Client,
-	manifests *manifest.Store, metrics *telemetry.Metrics, logger *slog.Logger) *Server {
+	manifests *manifest.Store, results *resultstore.Store, metrics *telemetry.Metrics,
+	logger *slog.Logger) *Server {
 
 	return &Server{
 		cfg:        cfg,
 		pool:       pool,
 		downstream: client,
 		manifests:  manifests,
+		results:    results,
+		latency:    latency.NewTracker(),
 		metrics:    metrics,
 		logger:     logger,
 	}
@@ -187,7 +193,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnprocessableEntity, key, "request_hash_mismatch",
 			"This key was previously used with a different request body.")
 	case claim.VerdictExisting:
-		s.writeExisting(w, key, s.awaitCompletion(r.Context(), result.Record))
+		s.writeExisting(r.Context(), w, key, req.ResourceType, s.awaitCompletion(r.Context(), result.Record))
 	case claim.VerdictRejected:
 		s.metrics.Conflicts.WithLabelValues(req.ResourceType, string(claim.ResolutionRejected)).Inc()
 		s.metrics.Writes.WithLabelValues(string(claim.StatusRejected)).Inc()
@@ -270,10 +276,17 @@ func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req
 		Payload:        req.Payload,
 		Classification: definition.Errors,
 	})
+	took := time.Since(started)
 	s.metrics.DownstreamDuration.
 		WithLabelValues(outcome.Disposition.String()).
-		Observe(time.Since(started).Seconds())
+		Observe(took.Seconds())
 	s.metrics.ObserveResultSize(len(outcome.Result))
+
+	// ADR-0004. A refused connection returns in about a millisecond and is not a service
+	// latency, so it never feeds the advice.
+	if outcome.Disposition != downstream.Failed {
+		s.latency.Observe(req.ResourceType, took)
+	}
 
 	status := statusFor(outcome.Disposition)
 	s.metrics.Writes.WithLabelValues(string(status)).Inc()
@@ -319,10 +332,24 @@ func (s *Server) persistOutcome(ctx context.Context, agentID, key string,
 
 	detached := context.WithoutCancel(ctx)
 
+	placeCtx, cancelPlace := context.WithTimeout(detached, 5*time.Second)
+	placement := s.results.Place(placeCtx, agentID, key, outcome.Result)
+	cancelPlace()
+
+	switch {
+	case placement.Offloaded:
+		s.metrics.ResultsOffloaded.Inc()
+	case placement.FellBack:
+		s.metrics.OffloadFallbacks.Inc()
+		s.logger.Warn("result could not be offloaded; stored inline over the cap rather than lost",
+			"agent_id", agentID, "key", key, "bytes", len(outcome.Result))
+	}
+
 	backoff := 50 * time.Millisecond
 	for attempt := 1; attempt <= s.cfg.OutcomeWriteAttempts; attempt++ {
 		writeCtx, cancel := context.WithTimeout(detached, 2*time.Second)
-		updated, err := claim.Complete(writeCtx, s.pool, agentID, key, status, outcome.Result, outcome.Detail)
+		updated, err := claim.Complete(writeCtx, s.pool, agentID, key, status,
+			placement.Inline, placement.Ref, outcome.Detail)
 		cancel()
 
 		if err == nil {
@@ -368,23 +395,30 @@ func (s *Server) awaitCompletion(ctx context.Context, record claim.Record) claim
 	return record
 }
 
-func (s *Server) writeExisting(w http.ResponseWriter, key string, record claim.Record) {
+func (s *Server) writeExisting(ctx context.Context, w http.ResponseWriter, key, resourceType string,
+	record claim.Record) {
+
 	switch record.Status {
 	case claim.StatusDone:
+		result, ok := s.resolveResult(ctx, w, key, record)
+		if !ok {
+			return
+		}
 		s.metrics.Replays.Inc()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"idempotency_key": key,
 			"status":          string(record.Status),
-			"result":          record.Result,
+			"result":          result,
 			"replayed":        true,
 		})
 	case claim.StatusPending:
-		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+		wait := s.latency.RetryAfter(resourceType)
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(wait.Round(time.Second).Seconds()))))
 		w.Header().Set("Location", "/v1/writes/"+key)
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"idempotency_key": key,
 			"status":          string(record.Status),
-			"retry_after_ms":  retryAfter.Milliseconds(),
+			"retry_after_ms":  wait.Milliseconds(),
 		})
 	case claim.StatusRejected:
 		if len(record.Result) == 0 {
@@ -408,6 +442,30 @@ func (s *Server) writeExisting(w http.ResponseWriter, key string, record claim.R
 			"retryable":       true,
 		})
 	}
+}
+
+// A result that was offloaded and cannot be fetched is not a missing write. The key is
+// terminal and the write definitely happened, so this reports a failure of this layer —
+// never anything from the not-executed family, which would be a lie about a write that ran.
+func (s *Server) resolveResult(ctx context.Context, w http.ResponseWriter, key string,
+	record claim.Record) (json.RawMessage, bool) {
+
+	result, err := s.results.Resolve(ctx, record.Result, record.ResultRef)
+	if err != nil {
+		s.metrics.ResultFetchFailures.Inc()
+		s.logger.Error("stored result could not be fetched", "key", key,
+			"result_ref", record.ResultRef, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"idempotency_key": key,
+			"status":          string(record.Status),
+			"reason":          "result_unavailable",
+			"retryable":       true,
+			"detail": "The write completed and its outcome is recorded, but the stored result " +
+				"could not be read. Retrying the same key replays it and cannot re-execute.",
+		})
+		return nil, false
+	}
+	return result, true
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
@@ -434,13 +492,18 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result, ok := s.resolveResult(r.Context(), w, key, record)
+	if !ok {
+		return
+	}
+
 	body := map[string]any{
 		"idempotency_key": key,
 		"status":          string(record.Status),
 		"attempt_count":   record.AttemptCount,
 	}
-	if len(record.Result) > 0 {
-		body["result"] = record.Result
+	if len(result) > 0 {
+		body["result"] = result
 	}
 	if record.OutcomeDetail != "" {
 		body["detail"] = record.OutcomeDetail

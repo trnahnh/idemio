@@ -18,6 +18,8 @@ import (
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/downstream"
 	"github.com/trnahnh/idemio/internal/manifest"
+	"github.com/trnahnh/idemio/internal/objectstore"
+	"github.com/trnahnh/idemio/internal/resultstore"
 	"github.com/trnahnh/idemio/internal/store"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
@@ -64,6 +66,19 @@ func run() error {
 		return err
 	}
 
+	objects, err := objectstore.New(ctx, objectstore.Options{
+		Endpoint:  cfg.ArchiveEndpoint,
+		Bucket:    cfg.ArchiveBucket,
+		AccessKey: cfg.ArchiveAccessKey,
+		SecretKey: cfg.ArchiveSecretKey,
+	})
+	if err != nil {
+		return err
+	}
+	if objects == nil {
+		logger.Warn("no object storage configured; results are stored inline whatever their size")
+	}
+
 	metrics := telemetry.New(pool, cfg, logger)
 	activate := activator(ctx, pool, metrics, logger)
 	activate(manifests.Current())
@@ -77,6 +92,7 @@ func run() error {
 		Handler: api.New(cfg, pool,
 			downstream.New(cfg.DownstreamBaseURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout),
 			manifests,
+			resultstore.New(objects, cfg.ResultInlineBytes),
 			metrics,
 			logger,
 		).Routes(),

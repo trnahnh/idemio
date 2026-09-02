@@ -12,6 +12,7 @@ import (
 	"github.com/trnahnh/idemio/internal/claim"
 	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/probe"
+	"github.com/trnahnh/idemio/internal/resultstore"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
@@ -25,6 +26,7 @@ type Reconciler struct {
 	pool       *pgxpool.Pool
 	prober     Prober
 	manifests  *manifest.Store
+	results    *resultstore.Store
 	staleAfter time.Duration
 	batch      int
 	metrics    *telemetry.Metrics
@@ -52,13 +54,14 @@ const selectStale = `
 	 ORDER BY claimed_at
 	 LIMIT $2`
 
-func New(pool *pgxpool.Pool, prober Prober, manifests *manifest.Store, staleAfter time.Duration,
-	metrics *telemetry.Metrics, logger *slog.Logger) *Reconciler {
+func New(pool *pgxpool.Pool, prober Prober, manifests *manifest.Store, results *resultstore.Store,
+	staleAfter time.Duration, metrics *telemetry.Metrics, logger *slog.Logger) *Reconciler {
 
 	return &Reconciler{
 		pool:       pool,
 		prober:     prober,
 		manifests:  manifests,
+		results:    results,
 		staleAfter: staleAfter,
 		batch:      defaultBatch,
 		metrics:    metrics,
@@ -170,7 +173,9 @@ func (r *Reconciler) escalate(ctx context.Context, candidate stale, detail strin
 func (r *Reconciler) complete(ctx context.Context, candidate stale, status claim.Status,
 	result json.RawMessage, detail string, summary *Summary) bool {
 
-	updated, err := claim.Complete(ctx, r.pool, candidate.agentID, candidate.key, status, result, detail)
+	placement := r.results.Place(ctx, candidate.agentID, candidate.key, result)
+	updated, err := claim.Complete(ctx, r.pool, candidate.agentID, candidate.key, status,
+		placement.Inline, placement.Ref, detail)
 	if err != nil {
 		summary.Unresolved++
 		r.logger.Error("recording reconciled outcome failed",

@@ -13,6 +13,13 @@ type Archiver interface {
 	Archive(ctx context.Context, table, partition string) error
 }
 
+// Offloaded result bodies are Confidential and must not outlive the rows that govern them.
+// The row and the object cannot be removed atomically, so a bucket lifecycle rule is the
+// backstop for a crash between the two.
+type ResultDeleter interface {
+	Delete(ctx context.Context, refs []string) error
+}
+
 type Retention struct {
 	Keys          time.Duration
 	Intents       time.Duration
@@ -41,25 +48,28 @@ const expireKeys = `
 	)
 	DELETE FROM idempotency_keys k
 	 USING expired e
-	 WHERE k.agent_id = e.agent_id AND k.idempotency_key = e.idempotency_key`
+	 WHERE k.agent_id = e.agent_id AND k.idempotency_key = e.idempotency_key
+	RETURNING k.result_ref`
 
 const batchSize = 1000
 
 // Hash partitions cannot be dropped by age (ADR-0009), so keys expire by DELETE. The rate
 // is matched to ingest rather than run as a daily burst, which is what keeps autovacuum
 // from falling permanently behind.
-func (r Retention) ExpireKeys(ctx context.Context, pool *pgxpool.Pool, budget time.Duration) (int64, error) {
+func (r Retention) ExpireKeys(ctx context.Context, pool *pgxpool.Pool, results ResultDeleter,
+	budget time.Duration) (int64, error) {
+
 	deadline := time.Now().Add(budget)
 	interval := time.Duration(float64(batchSize) / float64(r.RowsPerSecond) * float64(time.Second))
 
 	var deleted int64
 	for time.Now().Before(deadline) {
-		tag, err := pool.Exec(ctx, expireKeys, r.Keys.Seconds(), batchSize)
+		_, batch, err := expireBatch(ctx, pool, r.Keys, results)
 		if err != nil {
-			return deleted, fmt.Errorf("expire keys: %w", err)
+			return deleted, err
 		}
-		deleted += tag.RowsAffected()
-		if tag.RowsAffected() < batchSize {
+		deleted += batch
+		if batch < batchSize {
 			return deleted, nil
 		}
 
@@ -70,6 +80,41 @@ func (r Retention) ExpireKeys(ctx context.Context, pool *pgxpool.Pool, budget ti
 		}
 	}
 	return deleted, nil
+}
+
+// The row goes first. An object left behind is reclaimed by the bucket lifecycle rule; a
+// row deleted after its object would leave a key promising a result that is already gone.
+func expireBatch(ctx context.Context, pool *pgxpool.Pool, hot time.Duration,
+	results ResultDeleter) ([]string, int64, error) {
+
+	rows, err := pool.Query(ctx, expireKeys, hot.Seconds(), batchSize)
+	if err != nil {
+		return nil, 0, fmt.Errorf("expire keys: %w", err)
+	}
+	defer rows.Close()
+
+	var refs []string
+	var count int64
+	for rows.Next() {
+		var ref *string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, 0, fmt.Errorf("scan expired key: %w", err)
+		}
+		count++
+		if ref != nil && *ref != "" {
+			refs = append(refs, *ref)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("expire keys: %w", err)
+	}
+
+	if results != nil && len(refs) > 0 {
+		if err := results.Delete(ctx, refs); err != nil {
+			return refs, count, fmt.Errorf("delete expired results: %w", err)
+		}
+	}
+	return refs, count, nil
 }
 
 const expiredPartitions = `

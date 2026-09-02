@@ -40,6 +40,10 @@ type Metrics struct {
 	ManifestReloadFailures prometheus.Counter
 	ManifestInfo           *prometheus.GaugeVec
 
+	ResultsOffloaded    prometheus.Counter
+	OffloadFallbacks    prometheus.Counter
+	ResultFetchFailures prometheus.Counter
+
 	RelayPublished     prometheus.Counter
 	RelayFailures      prometheus.Counter
 	PartitionsCreated  *prometheus.CounterVec
@@ -96,6 +100,15 @@ func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *Metrics {
 		"Manifest reloads rejected by validation. The previous version stays live.")
 	m.ManifestInfo = m.gaugeVec("idemio_manifest_info",
 		"Always 1, labelled with the manifest version this process is serving.", "version")
+
+	m.ResultsOffloaded = m.counter("idemio_results_offloaded_total",
+		"Results written to object storage because they exceeded limits.result_inline_bytes.")
+	m.OffloadFallbacks = m.counter("idemio_offload_fallbacks_total",
+		"Oversized results stored inline because object storage would not take them. The cap "+
+			"is a performance guard, so exceeding it beats losing the result.")
+	m.ResultFetchFailures = m.counter("idemio_result_fetch_failures_total",
+		"Replays that could not read an offloaded result. The write completed; only its body "+
+			"is unreadable.")
 
 	m.RelayPublished = m.counter("idemio_relay_published_total",
 		"Intents published to the broker. Publication is at-least-once.")

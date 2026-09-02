@@ -70,6 +70,7 @@ type Record struct {
 	RequestHash   string
 	Status        Status
 	Result        json.RawMessage
+	ResultRef     string
 	OutcomeDetail string
 	AttemptCount  int
 }
@@ -97,7 +98,8 @@ const insertKey = `
 	RETURNING status`
 
 const selectKey = `
-	SELECT request_hash, status, result, coalesce(outcome_detail, ''), attempt_count
+	SELECT request_hash, status, result, coalesce(result_ref, ''),
+	       coalesce(outcome_detail, ''), attempt_count
 	  FROM idempotency_keys
 	 WHERE agent_id = $1 AND idempotency_key = $2::uuid`
 
@@ -323,7 +325,7 @@ func readRecord(ctx context.Context, q interface {
 	var result []byte
 
 	err := q.QueryRow(ctx, selectKey, agentID, key).Scan(
-		&record.RequestHash, &record.Status, &result,
+		&record.RequestHash, &record.Status, &result, &record.ResultRef,
 		&record.OutcomeDetail, &record.AttemptCount,
 	)
 	if err != nil {

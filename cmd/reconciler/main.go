@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,8 +18,10 @@ import (
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/maintenance"
 	"github.com/trnahnh/idemio/internal/manifest"
+	"github.com/trnahnh/idemio/internal/objectstore"
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/reconcile"
+	"github.com/trnahnh/idemio/internal/resultstore"
 	"github.com/trnahnh/idemio/internal/store"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
@@ -32,7 +35,18 @@ func main() {
 	}
 }
 
+var (
+	restorePartition = flag.String("restore-partition", "",
+		"restore this archived partition into a standalone table and exit")
+	restoreTable = flag.String("restore-table", "write_intents",
+		"parent table the partition belonged to")
+	restoreInto = flag.String("restore-into", "",
+		"name of the table to restore into; defaults to <partition>_restored")
+)
+
 func run() error {
+	flag.Parse()
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	cfg, err := config.Load()
@@ -58,6 +72,20 @@ func run() error {
 		return err
 	}
 
+	objects, err := objectstore.New(ctx, objectstore.Options{
+		Endpoint:  cfg.ArchiveEndpoint,
+		Bucket:    cfg.ArchiveBucket,
+		AccessKey: cfg.ArchiveAccessKey,
+		SecretKey: cfg.ArchiveSecretKey,
+	})
+	if err != nil {
+		return err
+	}
+
+	if *restorePartition != "" {
+		return restore(ctx, archive.New(pool, objects), *restorePartition, *restoreTable, *restoreInto, logger)
+	}
+
 	metrics := telemetry.New(pool, cfg, logger)
 	metrics.ManifestInfo.WithLabelValues(manifests.Current().Version()).Set(1)
 	go serveMetrics(cfg.MetricsAddr, metrics, logger)
@@ -68,24 +96,19 @@ func run() error {
 		},
 		metrics.ManifestReloadFailures.Inc)
 
-	archiver, err := archive.New(ctx, pool, archive.Options{
-		Endpoint:  cfg.ArchiveEndpoint,
-		Bucket:    cfg.ArchiveBucket,
-		AccessKey: cfg.ArchiveAccessKey,
-		SecretKey: cfg.ArchiveSecretKey,
-	})
-	if err != nil {
-		return err
-	}
+	archiver := archive.New(pool, objects)
 	if archiver == nil {
 		logger.Warn("no archive configured; partitions past retention will be left attached " +
 			"rather than dropped")
 	}
 
-	go maintain(ctx, pool, cfg, archiver, metrics, logger)
+	results := resultstore.New(objects, cfg.ResultInlineBytes)
+
+	go maintain(ctx, pool, cfg, archiver, results, metrics, logger)
 
 	prober := probe.New(cfg.DownstreamBaseURL, cfg.DownstreamTimeout)
-	reconciler := reconcile.New(pool, prober, manifests, cfg.ReconcileStaleAfter, metrics, logger)
+	reconciler := reconcile.New(pool, prober, manifests, results, cfg.ReconcileStaleAfter,
+		metrics, logger)
 
 	logger.Info("reconciler started",
 		"interval", cfg.ReconcileInterval.String(),
@@ -98,7 +121,8 @@ func run() error {
 // ADR-0016: partition creation and retention are database housekeeping on the same cadence
 // as crash recovery, and belong in the same process as it.
 func maintain(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
-	archiver maintenance.Archiver, metrics *telemetry.Metrics, logger *slog.Logger) {
+	archiver maintenance.Archiver, results maintenance.ResultDeleter,
+	metrics *telemetry.Metrics, logger *slog.Logger) {
 
 	retention := maintenance.Retention{
 		Keys:          cfg.RetentionKeys,
@@ -112,7 +136,7 @@ func maintain(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
 	defer ticker.Stop()
 
 	for {
-		runMaintenance(ctx, pool, cfg, retention, archiver, metrics, logger)
+		runMaintenance(ctx, pool, cfg, retention, archiver, results, metrics, logger)
 
 		select {
 		case <-ctx.Done():
@@ -124,7 +148,7 @@ func maintain(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
 
 func runMaintenance(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
 	retention maintenance.Retention, archiver maintenance.Archiver,
-	metrics *telemetry.Metrics, logger *slog.Logger) {
+	results maintenance.ResultDeleter, metrics *telemetry.Metrics, logger *slog.Logger) {
 
 	created := func(table string) { metrics.PartitionsCreated.WithLabelValues(table).Inc() }
 	if err := maintenance.EnsurePartitions(ctx, pool, cfg.PartitionAhead, created); err != nil {
@@ -132,7 +156,7 @@ func runMaintenance(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
 			"error", err)
 	}
 
-	deleted, err := retention.ExpireKeys(ctx, pool, maintenanceInterval/2)
+	deleted, err := retention.ExpireKeys(ctx, pool, results, maintenanceInterval/2)
 	if err != nil {
 		logger.Error("key expiry failed", "error", err)
 	}
@@ -162,4 +186,28 @@ func serveMetrics(addr string, metrics *telemetry.Metrics, logger *slog.Logger) 
 	if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("metrics endpoint stopped", "addr", addr, "error", err)
 	}
+}
+
+// Restoring never re-attaches. An archived partition put back under the live parent would
+// place months-old intents inside the conflict window and back into the outbox as
+// unpublished, so a recovery action would start rejecting live writes and republishing
+// history. Attaching it is one deliberate ALTER TABLE away for whoever decides they want it.
+func restore(ctx context.Context, archiver *archive.Archive, partition, table, into string,
+	logger *slog.Logger) error {
+
+	if archiver == nil {
+		return errors.New("no object storage is configured, so there is no archive to restore from")
+	}
+	if into == "" {
+		into = partition + "_restored"
+	}
+
+	restored, err := archiver.Restore(ctx, table, partition, into)
+	if err != nil {
+		return fmt.Errorf("restore %s: %w", partition, err)
+	}
+
+	logger.Info("partition restored", "partition", partition, "into", into, "rows", restored)
+	fmt.Printf("restored=%d into=%s\n", restored, into)
+	return nil
 }

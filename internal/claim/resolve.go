@@ -167,7 +167,8 @@ func firstPending(ctx context.Context, tx pgx.Tx, agentID string, candidates []i
 
 const completeKey = `
 	UPDATE idempotency_keys
-	   SET status = $3::key_status, result = $4, outcome_detail = $5, completed_at = now()
+	   SET status = $3::key_status, result = $4, result_ref = $5, outcome_detail = $6,
+	       completed_at = now()
 	 WHERE agent_id = $1 AND idempotency_key = $2::uuid AND status = 'pending'`
 
 const voidLatestIntent = `
@@ -186,11 +187,14 @@ const voidLatestIntent = `
 // counting against the next writer (ADR-0015). Status and voiding commit together or not
 // at all.
 func Complete(ctx context.Context, pool *pgxpool.Pool, agentID, key string,
-	status Status, result json.RawMessage, detail string) (bool, error) {
+	status Status, result json.RawMessage, resultRef, detail string) (bool, error) {
 
-	var storedResult, storedDetail any
+	var storedResult, storedRef, storedDetail any
 	if len(result) > 0 {
 		storedResult = []byte(result)
+	}
+	if resultRef != "" {
+		storedRef = resultRef
 	}
 	if detail != "" {
 		storedDetail = detail
@@ -202,7 +206,8 @@ func Complete(ctx context.Context, pool *pgxpool.Pool, agentID, key string,
 	}
 	defer tx.Rollback(ctx)
 
-	tag, err := tx.Exec(ctx, completeKey, agentID, key, string(status), storedResult, storedDetail)
+	tag, err := tx.Exec(ctx, completeKey, agentID, key, string(status),
+		storedResult, storedRef, storedDetail)
 	if err != nil {
 		return false, fmt.Errorf("complete key: %w", err)
 	}

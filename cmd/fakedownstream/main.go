@@ -77,13 +77,16 @@ func run() error {
 	dataAddr := flag.String("data-addr", "127.0.0.1:0", "address for the write path")
 	controlAddr := flag.String("control-addr", "127.0.0.1:0", "address for scripting and the probe")
 	ledgerPath := flag.String("ledger", "", "path to the append-only execution ledger")
+	durable := flag.Bool("durable", true,
+		"fsync every execution. Required for correctness tests; disable only for load runs, "+
+			"where the fsync would be the bottleneck being measured")
 	flag.Parse()
 
 	if *ledgerPath == "" {
 		return errors.New("-ledger is required")
 	}
 
-	records, err := openLedger(*ledgerPath)
+	records, err := openLedger(*ledgerPath, *durable)
 	if err != nil {
 		return err
 	}

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -41,11 +42,24 @@ type Execution struct {
 
 func Start(t *testing.T) *Fake {
 	t.Helper()
+	return start(t, true)
+}
+
+// The ledger's per-execution fsync is what lets it be trusted across a SIGKILL, and it is
+// also a few-hundred-per-second ceiling. A load run needs throughput, and gives up a crash
+// guarantee it is not exercising. No correctness test may use this.
+func StartForLoad(t *testing.T) *Fake {
+	t.Helper()
+	return start(t, false)
+}
+
+func start(t *testing.T, durable bool) *Fake {
+	t.Helper()
 
 	binary := build(t)
 	ledger := filepath.Join(t.TempDir(), "ledger.jsonl")
 
-	cmd := exec.Command(binary, "-ledger", ledger)
+	cmd := exec.Command(binary, "-ledger", ledger, "-durable="+strconv.FormatBool(durable))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)

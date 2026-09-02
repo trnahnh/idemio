@@ -101,3 +101,99 @@ groups:
           description: >-
             A client bug, never silently executed. Hashing is canonical per ADR-0003, so a
             legitimate retry that re-serialises its JSON will not trigger this.
+
+  - name: idemio-conflict-detection
+    rules:
+      - alert: IdemioConflictRejectionsSpiking
+        expr: >-
+          rate(idemio_conflicts_total{resolution="rejected"}[15m])
+            / clamp_min(rate(idemio_writes_total[15m]), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Over 5% of writes to {{ $labels.resource_type }} are being rejected as conflicts"
+          description: >-
+            A wrong or over-broad manifest surfaces as mass rejection, which is an
+            availability incident rather than a correctness one. Check whether enforcement
+            was enabled for this resource_type recently, and compare against the observed
+            rate that shadow mode produced before the change. Rolling back is a manifest
+            edit, not a deploy.
+
+      - alert: IdemioManifestReloadFailing
+        expr: increase(idemio_manifest_reload_failures_total[30m]) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Manifest reloads are being rejected"
+          description: >-
+            The process is still serving the last manifest that validated, so nothing is
+            broken right now. What is broken is that manifest changes have stopped taking
+            effect, silently, which means an operator believes they have changed conflict
+            semantics and has not. Read the validation errors in the process log.
+
+      - alert: IdemioSerializationTimeouts
+        expr: rate(idemio_serialization_waits_total{outcome="timeout"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Same-agent writes are waiting out their serialization budget"
+          description: >-
+            One agent is writing to a single resource faster than the downstream can absorb.
+            Each timeout is a retryable 503 with nothing written, so this is a throughput
+            signal, not a correctness one. Compare with idemio_lock_wait_seconds.
+
+      - alert: IdemioLockWaitHigh
+        expr: histogram_quantile(0.99, rate(idemio_lock_wait_seconds_bucket[30m])) > 0.05
+        for: 30m
+        labels:
+          severity: warn
+        annotations:
+          summary: "p99 resource lock wait is {{ $value }}s"
+          description: >-
+            One of the two ADR-0010 triggers for consistent-hash routing, at 50ms. This is a
+            signal to read rather than to act on: the ADR asks for sustained history at or
+            above 70% of target throughput before routing is adopted.
+
+  - name: idemio-pipelines
+    rules:
+      - alert: IdemioRetentionFallingBehind
+        expr: idemio_retention_lag_seconds > 7 * 24 * 3600
+        for: 1h
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.table }} holds data a week past its hot window"
+          description: >-
+            The retention sweep is rate-matched to ingest. If it loses, the hot table grows
+            without bound and no other signal says so until the disk does. For
+            idempotency_keys this is a batched DELETE that can be given more budget; for the
+            range-partitioned tables it usually means the archive export is failing.
+
+      - alert: IdemioRelayLagHigh
+        expr: idemio_relay_lag_seconds > 60
+        for: 15m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Outbox relay is {{ $value }}s behind"
+          description: >-
+            The Phase 1 exit criterion is under one minute at steady state. The relay is off
+            the write path by construction, so this never escalates to a write-path incident;
+            it degrades analytics and replay. Check idemio_relay_failures_total and the broker.
+
+      - alert: IdemioPartitionMaintenanceStopped
+        expr: >-
+          increase(idemio_partitions_created_total[7d]) == 0
+            and idemio_partition_headroom_seconds < 6 * 7 * 24 * 3600
+        for: 6h
+        labels:
+          severity: warn
+        annotations:
+          summary: "No partitions created for {{ $labels.table }} while headroom is shrinking"
+          description: >-
+            Headroom alone falls slowly and pages late. This fires while there is still time
+            to act: the maintainer has created nothing in a week and the horizon is closing.
+            IdemioPartitionHeadroomLow is the backstop, not the warning.

@@ -120,9 +120,12 @@ func TestEveryPagingSignalHasAnAlert(t *testing.T) {
 		"idemio_indeterminate_keys",
 		"idemio_oldest_pending_age_seconds",
 		"idemio_partition_headroom_seconds",
+		"idemio_conflicts_total",
+		"idemio_manifest_reload_failures_total",
+		"idemio_retention_lag_seconds",
 	} {
 		if !strings.Contains(rules, required) {
-			t.Errorf("%s carries no alert, but SYSTEM_DESIGN says it pages", required)
+			t.Errorf("%s carries no alert, but METRICS.md says it pages", required)
 		}
 	}
 }

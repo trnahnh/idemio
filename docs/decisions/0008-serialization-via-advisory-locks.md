@@ -1,6 +1,6 @@
 # ADR-0008: Serialize same-agent conflicts with Postgres advisory locks
 
-- **Status:** Accepted
+- **Status:** Accepted; the lock-timeout response and the serialization mechanism are superseded by [ADR-0015](0015-conflict-check-transaction-shape.md)
 - **Date:** 2026-09-01
 - **Phase:** 1
 

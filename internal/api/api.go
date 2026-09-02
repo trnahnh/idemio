@@ -16,7 +16,7 @@ import (
 	"github.com/trnahnh/idemio/internal/claim"
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/downstream"
-	"github.com/trnahnh/idemio/internal/resource"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
@@ -30,20 +30,30 @@ type Server struct {
 	cfg        config.Config
 	pool       *pgxpool.Pool
 	downstream *downstream.Client
+	manifests  *manifest.Store
 	metrics    *telemetry.Metrics
 	logger     *slog.Logger
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool, client *downstream.Client,
-	metrics *telemetry.Metrics, logger *slog.Logger) *Server {
+	manifests *manifest.Store, metrics *telemetry.Metrics, logger *slog.Logger) *Server {
 
-	return &Server{cfg: cfg, pool: pool, downstream: client, metrics: metrics, logger: logger}
+	return &Server{
+		cfg:        cfg,
+		pool:       pool,
+		downstream: client,
+		manifests:  manifests,
+		metrics:    metrics,
+		logger:     logger,
+	}
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/writes", s.handleWrite)
 	mux.HandleFunc("GET /v1/writes/{key}", s.handleRead)
+	mux.HandleFunc("GET /v1/resources/{resource_type}/{resource_id}/intents", s.handleIntents)
+	mux.HandleFunc("GET /v1/conflicts", s.handleConflicts)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -121,10 +131,12 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	operationClass, known := resource.ClassOf(req.ResourceType, req.Operation)
+	snapshot := s.manifests.Current()
+	definition, declared, known := lookupOperation(snapshot, req.ResourceType, req.Operation)
 	if !known {
 		writeProblem(w, http.StatusUnprocessableEntity, key, "unknown_operation",
-			"No registered operation for this resource_type.")
+			"No manifest declares this operation for this resource_type. A write whose "+
+				"downstream responses cannot be classified is never admitted.")
 		return
 	}
 
@@ -140,15 +152,19 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := claim.Claim(r.Context(), s.pool, claim.Request{
-		AgentID:        req.AgentID,
-		Key:            key,
-		RequestHash:    hash,
-		ResourceType:   req.ResourceType,
-		ResourceID:     req.ResourceID,
-		Operation:      req.Operation,
-		OperationClass: operationClass,
-		Payload:        req.Payload,
+	result, err := s.claimWithSerialization(r.Context(), claim.Request{
+		AgentID:         req.AgentID,
+		Key:             key,
+		RequestHash:     hash,
+		ResourceType:    req.ResourceType,
+		ResourceID:      req.ResourceID,
+		Operation:       req.Operation,
+		Declared:        declared,
+		Payload:         req.Payload,
+		Window:          definition.ConflictWindow,
+		Enforce:         definition.Enforce,
+		ManifestVersion: snapshot.Version(),
+		LockTimeout:     s.cfg.ConflictLockTimeout,
 	})
 	if err != nil {
 		s.logger.Error("claim failed", "agent_id", req.AgentID, "key", key, "error", err)
@@ -159,24 +175,86 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request) {
 	if result.Collided {
 		s.metrics.ClaimCollisions.Inc()
 	}
+	s.metrics.LockWait.WithLabelValues(req.ResourceType).Observe(result.LockWait.Seconds())
+	if result.Observed > 0 {
+		s.metrics.Conflicts.WithLabelValues(req.ResourceType, string(claim.ResolutionObserved)).
+			Add(float64(result.Observed))
+	}
 
 	switch result.Verdict {
 	case claim.VerdictMismatch:
-		s.metrics.HashMismatches.WithLabelValues(req.AgentID).Inc()
+		s.metrics.HashMismatches.WithLabelValues(req.ResourceType).Inc()
 		writeProblem(w, http.StatusUnprocessableEntity, key, "request_hash_mismatch",
 			"This key was previously used with a different request body.")
 	case claim.VerdictExisting:
 		s.writeExisting(w, key, s.awaitCompletion(r.Context(), result.Record))
+	case claim.VerdictRejected:
+		s.metrics.Conflicts.WithLabelValues(req.ResourceType, string(claim.ResolutionRejected)).Inc()
+		s.metrics.Writes.WithLabelValues(string(claim.StatusRejected)).Inc()
+		writeRaw(w, http.StatusConflict, result.Record.Result)
+	case claim.VerdictLockTimeout:
+		s.metrics.LockTimeouts.WithLabelValues(req.ResourceType).Inc()
+		writeNotExecuted(w, key, "resource_busy")
+	case claim.VerdictSerializeTimeout:
+		writeNotExecuted(w, key, "serialization_wait_expired")
 	default:
 		if result.Record.AttemptCount > 1 {
 			s.metrics.ReclaimAttempts.Observe(float64(result.Record.AttemptCount))
 		}
-		s.execute(r, w, key, req, operationClass, result)
+		s.execute(r, w, key, req, definition, result)
 	}
 }
 
+func lookupOperation(snapshot *manifest.Snapshot, resourceType, operation string) (
+	manifest.Definition, manifest.Operation, bool) {
+
+	definition, ok := snapshot.Lookup(resourceType)
+	if !ok {
+		return manifest.Definition{}, manifest.Operation{}, false
+	}
+	declared, ok := definition.Operations[operation]
+	return definition, declared, ok
+}
+
+// ADR-0015: a same-agent conflict waits for the earlier write to finish and then re-runs
+// the whole transaction from the lock. The lock is not held while waiting.
+func (s *Server) claimWithSerialization(ctx context.Context, req claim.Request) (claim.Result, error) {
+	deadline := time.Now().Add(s.cfg.SerializeWait())
+
+	for {
+		result, err := claim.Claim(ctx, s.pool, req)
+		if err != nil || result.Verdict != claim.VerdictSerialize {
+			return result, err
+		}
+		if !s.waitForTerminal(ctx, result.Blocking, deadline) {
+			s.metrics.SerializationWaits.WithLabelValues("timeout").Inc()
+			result.Verdict = claim.VerdictSerializeTimeout
+			return result, nil
+		}
+		s.metrics.SerializationWaits.WithLabelValues("resolved").Inc()
+	}
+}
+
+func (s *Server) waitForTerminal(ctx context.Context, blocking claim.Blocking, deadline time.Time) bool {
+	for time.Now().Before(deadline) {
+		record, found, err := claim.Lookup(ctx, s.pool, blocking.AgentID, blocking.Key)
+		if err != nil {
+			return false
+		}
+		if !found || record.Status != claim.StatusPending {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(pendingPollFloor):
+		}
+	}
+	return false
+}
+
 func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req writeRequest,
-	operationClass string, claimed claim.Result) {
+	definition manifest.Definition, claimed claim.Result) {
 
 	callCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()),
 		s.cfg.DownstreamConnectTimeout+s.cfg.DownstreamTimeout)
@@ -184,12 +262,13 @@ func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req
 
 	started := time.Now()
 	outcome := s.downstream.Execute(callCtx, downstream.Request{
-		AgentID:      req.AgentID,
-		Key:          key,
-		ResourceType: req.ResourceType,
-		ResourceID:   req.ResourceID,
-		Operation:    req.Operation,
-		Payload:      req.Payload,
+		AgentID:        req.AgentID,
+		Key:            key,
+		ResourceType:   req.ResourceType,
+		ResourceID:     req.ResourceID,
+		Operation:      req.Operation,
+		Payload:        req.Payload,
+		Classification: definition.Errors,
 	})
 	s.metrics.DownstreamDuration.
 		WithLabelValues(outcome.Disposition.String()).
@@ -206,7 +285,7 @@ func (s *Server) execute(r *http.Request, w http.ResponseWriter, key string, req
 	s.logger.Info("write completed",
 		"agent_id", req.AgentID, "key", key,
 		"resource_type", req.ResourceType, "resource_id", req.ResourceID,
-		"operation_class", operationClass, "status", string(status))
+		"operation_class", definition.Operations[req.Operation].Class, "status", string(status))
 
 	switch outcome.Disposition {
 	case downstream.Done:
@@ -308,7 +387,7 @@ func (s *Server) writeExisting(w http.ResponseWriter, key string, record claim.R
 			"retry_after_ms":  retryAfter.Milliseconds(),
 		})
 	case claim.StatusRejected:
-		writeProblem(w, http.StatusConflict, key, "conflicting_write", record.OutcomeDetail)
+		writeRaw(w, http.StatusConflict, record.Result)
 	case claim.StatusIndeterminate:
 		writeJSON(w, http.StatusBadGateway, map[string]any{
 			"idempotency_key": key,
@@ -385,6 +464,22 @@ func writeProblem(w http.ResponseWriter, status int, key, reason, detail string)
 		body["detail"] = detail
 	}
 	writeJSON(w, status, body)
+}
+
+func writeNotExecuted(w http.ResponseWriter, key, reason string) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"idempotency_key": key,
+		"status":          string(claim.StatusFailed),
+		"reason":          reason,
+		"retryable":       true,
+		"detail":          "No claim was made and nothing was sent downstream. Retry the same key.",
+	})
+}
+
+func writeRaw(w http.ResponseWriter, status int, body json.RawMessage) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(body)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

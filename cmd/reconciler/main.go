@@ -9,16 +9,21 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/trnahnh/idemio/internal/archive"
 	"github.com/trnahnh/idemio/internal/config"
+	"github.com/trnahnh/idemio/internal/maintenance"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/reconcile"
-	"github.com/trnahnh/idemio/internal/resource"
 	"github.com/trnahnh/idemio/internal/store"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
+
+const maintenanceInterval = time.Hour
 
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
@@ -34,7 +39,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := resource.Validate(); err != nil {
+
+	manifests, err := manifest.NewStore(cfg.ManifestDir)
+	if err != nil {
 		return err
 	}
 
@@ -52,16 +59,100 @@ func run() error {
 	}
 
 	metrics := telemetry.New(pool, cfg, logger)
+	metrics.ManifestInfo.WithLabelValues(manifests.Current().Version()).Set(1)
 	go serveMetrics(cfg.MetricsAddr, metrics, logger)
+	go manifests.Watch(ctx, cfg.ManifestReloadInterval, logger,
+		func(snapshot *manifest.Snapshot) {
+			metrics.ManifestInfo.Reset()
+			metrics.ManifestInfo.WithLabelValues(snapshot.Version()).Set(1)
+		},
+		metrics.ManifestReloadFailures.Inc)
+
+	archiver, err := archive.New(ctx, pool, archive.Options{
+		Endpoint:  cfg.ArchiveEndpoint,
+		Bucket:    cfg.ArchiveBucket,
+		AccessKey: cfg.ArchiveAccessKey,
+		SecretKey: cfg.ArchiveSecretKey,
+	})
+	if err != nil {
+		return err
+	}
+	if archiver == nil {
+		logger.Warn("no archive configured; partitions past retention will be left attached " +
+			"rather than dropped")
+	}
+
+	go maintain(ctx, pool, cfg, archiver, metrics, logger)
 
 	prober := probe.New(cfg.DownstreamBaseURL, cfg.DownstreamTimeout)
-	reconciler := reconcile.New(pool, prober, cfg.ReconcileStaleAfter, metrics, logger)
+	reconciler := reconcile.New(pool, prober, manifests, cfg.ReconcileStaleAfter, metrics, logger)
 
 	logger.Info("reconciler started",
 		"interval", cfg.ReconcileInterval.String(),
-		"stale_after", cfg.ReconcileStaleAfter.String())
+		"stale_after", cfg.ReconcileStaleAfter.String(),
+		"manifest_version", manifests.Current().Version())
 
 	return reconciler.Run(ctx, cfg.ReconcileInterval)
+}
+
+// ADR-0016: partition creation and retention are database housekeeping on the same cadence
+// as crash recovery, and belong in the same process as it.
+func maintain(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
+	archiver maintenance.Archiver, metrics *telemetry.Metrics, logger *slog.Logger) {
+
+	retention := maintenance.Retention{
+		Keys:          cfg.RetentionKeys,
+		Intents:       cfg.RetentionIntents,
+		Conflicts:     cfg.RetentionConflicts,
+		Audit:         cfg.RetentionAudit,
+		RowsPerSecond: cfg.RetentionRowsPerSec,
+	}
+
+	ticker := time.NewTicker(maintenanceInterval)
+	defer ticker.Stop()
+
+	for {
+		runMaintenance(ctx, pool, cfg, retention, archiver, metrics, logger)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func runMaintenance(ctx context.Context, pool *pgxpool.Pool, cfg config.Config,
+	retention maintenance.Retention, archiver maintenance.Archiver,
+	metrics *telemetry.Metrics, logger *slog.Logger) {
+
+	created := func(table string) { metrics.PartitionsCreated.WithLabelValues(table).Inc() }
+	if err := maintenance.EnsurePartitions(ctx, pool, cfg.PartitionAhead, created); err != nil {
+		logger.Error("partition maintenance failed; a missing partition is a write outage",
+			"error", err)
+	}
+
+	deleted, err := retention.ExpireKeys(ctx, pool, maintenanceInterval/2)
+	if err != nil {
+		logger.Error("key expiry failed", "error", err)
+	}
+	if deleted > 0 {
+		metrics.RetentionDeleted.WithLabelValues("idempotency_keys").Add(float64(deleted))
+	}
+
+	if archiver == nil {
+		return
+	}
+	retired, err := retention.RetireExpired(ctx, pool, archiver, logger)
+	if err != nil {
+		logger.Error("partition retirement failed", "error", err)
+	}
+	for _, partition := range retired {
+		if partition.Archived {
+			metrics.ArchivedPartitions.WithLabelValues(partition.Table).Inc()
+			metrics.RetentionDeleted.WithLabelValues(partition.Table).Inc()
+		}
+	}
 }
 
 func serveMetrics(addr string, metrics *telemetry.Metrics, logger *slog.Logger) {

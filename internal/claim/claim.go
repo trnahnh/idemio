@@ -5,17 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/trnahnh/idemio/internal/conflict"
+	"github.com/trnahnh/idemio/internal/manifest"
 )
 
 type Verdict string
 
 const (
-	VerdictClaimed  Verdict = "claimed"
-	VerdictExisting Verdict = "existing"
-	VerdictMismatch Verdict = "mismatch"
+	VerdictClaimed     Verdict = "claimed"
+	VerdictExisting    Verdict = "existing"
+	VerdictMismatch    Verdict = "mismatch"
+	VerdictRejected    Verdict = "rejected"
+	VerdictSerialize   Verdict = "serialize"
+	VerdictLockTimeout Verdict = "lock_timeout"
+
+	VerdictSerializeTimeout Verdict = "serialize_timeout"
 )
 
 type Status string
@@ -28,15 +39,29 @@ const (
 	StatusRejected      Status = "rejected"
 )
 
+func (s Status) terminal() bool { return s != StatusPending }
+
+type Resolution string
+
+const (
+	ResolutionSerialized Resolution = "serialized"
+	ResolutionRejected   Resolution = "rejected"
+	ResolutionObserved   Resolution = "observed"
+)
+
 type Request struct {
-	AgentID        string
-	Key            string
-	RequestHash    string
-	ResourceType   string
-	ResourceID     string
-	Operation      string
-	OperationClass string
-	Payload        json.RawMessage
+	AgentID         string
+	Key             string
+	RequestHash     string
+	ResourceType    string
+	ResourceID      string
+	Operation       string
+	Declared        manifest.Operation
+	Payload         json.RawMessage
+	Window          time.Duration
+	Enforce         bool
+	ManifestVersion string
+	LockTimeout     time.Duration
 }
 
 type Record struct {
@@ -49,11 +74,19 @@ type Record struct {
 	AttemptCount  int
 }
 
+type Blocking struct {
+	AgentID string
+	Key     string
+}
+
 type Result struct {
 	Verdict  Verdict
 	Record   Record
 	IntentID string
 	Collided bool
+	LockWait time.Duration
+	Blocking Blocking
+	Observed int
 }
 
 const insertKey = `
@@ -78,9 +111,53 @@ const reclaimKey = `
 
 const insertIntent = `
 	INSERT INTO write_intents
-	    (agent_id, idempotency_key, resource_type, resource_id, operation, operation_class, payload)
-	VALUES ($1, $2::uuid, $3, $4, $5, $6::operation_class, $7)
-	RETURNING intent_id`
+	    (agent_id, idempotency_key, resource_type, resource_id, operation,
+	     operation_class, scope_selector, payload)
+	VALUES ($1, $2::uuid, $3, $4, $5, $6::operation_class, $7, $8)
+	RETURNING intent_id::text, emitted_at`
+
+const selectWindow = `
+	SELECT intent_id::text, agent_id, idempotency_key::text, operation,
+	       operation_class::text, scope_selector
+	  FROM write_intents
+	 WHERE resource_type = $1
+	   AND resource_id   = $2
+	   AND emitted_at > now() - make_interval(secs => $3)
+	   AND voided_at IS NULL
+	   AND intent_id <> $4::uuid
+	 ORDER BY emitted_at DESC`
+
+const selectStatuses = `
+	SELECT idempotency_key::text, status
+	  FROM idempotency_keys
+	 WHERE agent_id = $1 AND idempotency_key = ANY($2::uuid[])`
+
+const insertConflict = `
+	INSERT INTO conflicts
+	    (intent_id_a, intent_id_b, agent_id_a, agent_id_b, resource_type, resource_id,
+	     reason, resolution, manifest_version)
+	VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::conflict_resolution, $9)
+	RETURNING conflict_id::text`
+
+const rejectKey = `
+	UPDATE idempotency_keys
+	   SET status = 'rejected', completed_at = now(), result = $3, outcome_detail = $4
+	 WHERE agent_id = $1 AND idempotency_key = $2::uuid
+	RETURNING result`
+
+const voidIntent = `
+	UPDATE write_intents SET voided_at = now()
+	 WHERE intent_id = $1::uuid AND emitted_at = $2`
+
+const lockNotAvailable = "55P03"
+
+type intent struct {
+	id        string
+	agentID   string
+	key       string
+	operation string
+	declared  manifest.Operation
+}
 
 func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error) {
 	tx, err := pool.Begin(ctx)
@@ -89,65 +166,113 @@ func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error)
 	}
 	defer tx.Rollback(ctx)
 
-	won, err := insertClaim(ctx, tx, req)
+	lockWait, err := lockResource(ctx, tx, req)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == lockNotAvailable {
+			return Result{Verdict: VerdictLockTimeout, LockWait: lockWait}, nil
+		}
 		return Result{}, err
 	}
 
-	if !won {
-		existing, err := readRecord(ctx, tx, req.AgentID, req.Key)
-		if err != nil {
-			return Result{}, err
-		}
-		if existing.RequestHash != req.RequestHash {
-			return Result{Verdict: VerdictMismatch, Record: existing, Collided: true}, nil
-		}
-		if existing.Status != StatusFailed {
-			return Result{Verdict: VerdictExisting, Record: existing, Collided: true}, nil
-		}
-
-		attempt, reclaimed, err := reclaim(ctx, tx, req)
-		if err != nil {
-			return Result{}, err
-		}
-		if !reclaimed {
-			existing.Status = StatusPending
-			return Result{Verdict: VerdictExisting, Record: existing, Collided: true}, nil
-		}
-		existing.Status = StatusPending
-		existing.AttemptCount = attempt
-		existing.Result = nil
-		existing.OutcomeDetail = ""
-
-		intentID, err := recordIntent(ctx, tx, req)
-		if err != nil {
-			return Result{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Result{}, fmt.Errorf("commit reclaim: %w", err)
-		}
-		return Result{Verdict: VerdictClaimed, Record: existing, IntentID: intentID, Collided: true}, nil
-	}
-
-	intentID, err := recordIntent(ctx, tx, req)
+	result, fresh, err := claimKey(ctx, tx, req)
 	if err != nil {
 		return Result{}, err
+	}
+	result.LockWait = lockWait
+	if !fresh {
+		return result, nil
+	}
+
+	intentID, emittedAt, err := recordIntent(ctx, tx, req)
+	if err != nil {
+		return Result{}, err
+	}
+	result.IntentID = intentID
+
+	outcome, err := resolveConflicts(ctx, tx, req, intentID, emittedAt)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Verdict = outcome.Verdict
+	result.Observed = outcome.Observed
+	result.Blocking = outcome.Blocking
+
+	if outcome.Verdict == VerdictSerialize {
+		return result, nil
+	}
+	if outcome.Verdict == VerdictRejected {
+		result.Record.Status = StatusRejected
+		result.Record.Result = outcome.Record.Result
+		result.Record.OutcomeDetail = outcome.Record.OutcomeDetail
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Result{}, fmt.Errorf("commit claim: %w", err)
 	}
+	return result, nil
+}
 
-	return Result{
-		Verdict: VerdictClaimed,
-		Record: Record{
-			AgentID:      req.AgentID,
-			Key:          req.Key,
-			RequestHash:  req.RequestHash,
-			Status:       StatusPending,
-			AttemptCount: 1,
-		},
-		IntentID: intentID,
-	}, nil
+// ADR-0015: first statement of the transaction. Locking after the intent insert lets two
+// conflicting writers each observe the other and both lose.
+//
+// The timeout is set in the same statement rather than a preceding one, because a round
+// trip here is a round trip on every write. MATERIALIZED is what makes that safe: it forces
+// the CTE to be evaluated before the lock is requested, which a bare subquery does not
+// guarantee.
+const lockResourceStmt = `
+	WITH timeout AS MATERIALIZED (SELECT set_config('lock_timeout', $1, true))
+	SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) FROM timeout`
+
+func lockResource(ctx context.Context, tx pgx.Tx, req Request) (time.Duration, error) {
+	timeout := strconv.FormatInt(req.LockTimeout.Milliseconds(), 10)
+
+	started := time.Now()
+	_, err := tx.Exec(ctx, lockResourceStmt, timeout, req.ResourceType+":"+req.ResourceID)
+	return time.Since(started), err
+}
+
+func claimKey(ctx context.Context, tx pgx.Tx, req Request) (Result, bool, error) {
+	won, err := insertClaim(ctx, tx, req)
+	if err != nil {
+		return Result{}, false, err
+	}
+	if won {
+		return Result{
+			Verdict: VerdictClaimed,
+			Record: Record{
+				AgentID:      req.AgentID,
+				Key:          req.Key,
+				RequestHash:  req.RequestHash,
+				Status:       StatusPending,
+				AttemptCount: 1,
+			},
+		}, true, nil
+	}
+
+	existing, err := readRecord(ctx, tx, req.AgentID, req.Key)
+	if err != nil {
+		return Result{}, false, err
+	}
+	if existing.RequestHash != req.RequestHash {
+		return Result{Verdict: VerdictMismatch, Record: existing, Collided: true}, false, nil
+	}
+	if existing.Status != StatusFailed {
+		return Result{Verdict: VerdictExisting, Record: existing, Collided: true}, false, nil
+	}
+
+	attempt, reclaimed, err := reclaim(ctx, tx, req)
+	if err != nil {
+		return Result{}, false, err
+	}
+	existing.Status = StatusPending
+	if !reclaimed {
+		return Result{Verdict: VerdictExisting, Record: existing, Collided: true}, false, nil
+	}
+
+	existing.AttemptCount = attempt
+	existing.Result = nil
+	existing.OutcomeDetail = ""
+	return Result{Verdict: VerdictClaimed, Record: existing, Collided: true}, true, nil
 }
 
 func insertClaim(ctx context.Context, tx pgx.Tx, req Request) (bool, error) {
@@ -178,16 +303,18 @@ func reclaim(ctx context.Context, tx pgx.Tx, req Request) (int, bool, error) {
 	return attempt, true, nil
 }
 
-func recordIntent(ctx context.Context, tx pgx.Tx, req Request) (string, error) {
+func recordIntent(ctx context.Context, tx pgx.Tx, req Request) (string, time.Time, error) {
 	var intentID string
+	var emittedAt time.Time
+
 	err := tx.QueryRow(ctx, insertIntent,
-		req.AgentID, req.Key, req.ResourceType, req.ResourceID,
-		req.Operation, req.OperationClass, []byte(req.Payload),
-	).Scan(&intentID)
+		req.AgentID, req.Key, req.ResourceType, req.ResourceID, req.Operation,
+		req.Declared.Class, req.Declared.Scope, []byte(req.Payload),
+	).Scan(&intentID, &emittedAt)
 	if err != nil {
-		return "", fmt.Errorf("insert intent: %w", err)
+		return "", time.Time{}, fmt.Errorf("insert intent: %w", err)
 	}
-	return intentID, nil
+	return intentID, emittedAt, nil
 }
 
 func readRecord(ctx context.Context, q interface {
@@ -218,23 +345,28 @@ func Lookup(ctx context.Context, pool *pgxpool.Pool, agentID, key string) (Recor
 	return record, true, nil
 }
 
-const completeKey = `
-	UPDATE idempotency_keys
-	   SET status = $3::key_status, result = $4, outcome_detail = $5, completed_at = now()
-	 WHERE agent_id = $1 AND idempotency_key = $2::uuid AND status = 'pending'`
-
-func Complete(ctx context.Context, pool *pgxpool.Pool, agentID, key string, status Status, result json.RawMessage, detail string) (bool, error) {
-	var storedResult, storedDetail any
-	if len(result) > 0 {
-		storedResult = []byte(result)
-	}
-	if detail != "" {
-		storedDetail = detail
-	}
-
-	tag, err := pool.Exec(ctx, completeKey, agentID, key, string(status), storedResult, storedDetail)
+func conflictingIntents(ctx context.Context, tx pgx.Tx, req Request, exclude string) ([]intent, error) {
+	rows, err := tx.Query(ctx, selectWindow,
+		req.ResourceType, req.ResourceID, req.Window.Seconds(), exclude)
 	if err != nil {
-		return false, fmt.Errorf("complete key: %w", err)
+		return nil, fmt.Errorf("read conflict window: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	defer rows.Close()
+
+	var found []intent
+	for rows.Next() {
+		var candidate intent
+		if err := rows.Scan(&candidate.id, &candidate.agentID, &candidate.key,
+			&candidate.operation, &candidate.declared.Class, &candidate.declared.Scope); err != nil {
+			return nil, fmt.Errorf("scan conflict window: %w", err)
+		}
+		if conflict.Compatible(req.Declared, candidate.declared) {
+			continue
+		}
+		found = append(found, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read conflict window: %w", err)
+	}
+	return found, nil
 }

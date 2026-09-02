@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/trnahnh/idemio/internal/claim"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/probe"
-	"github.com/trnahnh/idemio/internal/resource"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
 
@@ -24,6 +24,7 @@ type Prober interface {
 type Reconciler struct {
 	pool       *pgxpool.Pool
 	prober     Prober
+	manifests  *manifest.Store
 	staleAfter time.Duration
 	batch      int
 	metrics    *telemetry.Metrics
@@ -51,12 +52,13 @@ const selectStale = `
 	 ORDER BY claimed_at
 	 LIMIT $2`
 
-func New(pool *pgxpool.Pool, prober Prober, staleAfter time.Duration,
+func New(pool *pgxpool.Pool, prober Prober, manifests *manifest.Store, staleAfter time.Duration,
 	metrics *telemetry.Metrics, logger *slog.Logger) *Reconciler {
 
 	return &Reconciler{
 		pool:       pool,
 		prober:     prober,
+		manifests:  manifests,
 		staleAfter: staleAfter,
 		batch:      defaultBatch,
 		metrics:    metrics,
@@ -123,7 +125,7 @@ func (r *Reconciler) staleKeys(ctx context.Context) ([]stale, error) {
 }
 
 func (r *Reconciler) resolve(ctx context.Context, candidate stale, summary *Summary) {
-	if _, registered := resource.Lookup(candidate.resourceType); !registered {
+	if _, registered := r.manifests.Current().Lookup(candidate.resourceType); !registered {
 		r.escalate(ctx, candidate, "no_probe_registered", summary)
 		return
 	}

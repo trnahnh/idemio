@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/trnahnh/idemio/internal/correlation"
-	"github.com/trnahnh/idemio/internal/resource"
+	"github.com/trnahnh/idemio/internal/manifest"
 )
 
 const CorrelationHeader = "X-Idemio-Correlation-Id"
@@ -49,6 +49,8 @@ type Request struct {
 	ResourceID   string
 	Operation    string
 	Payload      json.RawMessage
+
+	Classification manifest.ErrorClassification
 }
 
 type Client struct {
@@ -109,7 +111,7 @@ func (c *Client) Execute(ctx context.Context, req Request) Outcome {
 	if err != nil {
 		return Outcome{Detail: fmt.Sprintf("read response after send: %v", err)}
 	}
-	return classifyResponse(resource.ClassificationFor(req.ResourceType), resp.StatusCode, payload)
+	return classifyResponse(req.Classification, resp.StatusCode, payload)
 }
 
 func classifyTransportError(err error) Outcome {
@@ -123,7 +125,7 @@ func classifyTransportError(err error) Outcome {
 	return Outcome{Detail: fmt.Sprintf("downstream_timeout_after_send: %v", err)}
 }
 
-func classifyResponse(classification resource.ErrorClassification, status int, payload []byte) Outcome {
+func classifyResponse(classification manifest.ErrorClassification, status int, payload []byte) Outcome {
 	switch {
 	case classification.IsDefinitive(status):
 		return Outcome{Disposition: Done, Result: asJSON(payload)}

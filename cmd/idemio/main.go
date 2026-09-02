@@ -17,7 +17,7 @@ import (
 	"github.com/trnahnh/idemio/internal/api"
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/downstream"
-	"github.com/trnahnh/idemio/internal/resource"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/store"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
@@ -41,7 +41,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := resource.Validate(); err != nil {
+
+	manifests, err := manifest.NewStore(cfg.ManifestDir)
+	if err != nil {
 		return err
 	}
 
@@ -62,10 +64,20 @@ func run() error {
 		return err
 	}
 
+	metrics := telemetry.New(pool, cfg, logger)
+	activate := activator(ctx, pool, metrics, logger)
+	activate(manifests.Current())
+
+	watchCtx, stopWatching := context.WithCancel(ctx)
+	defer stopWatching()
+	go manifests.Watch(watchCtx, cfg.ManifestReloadInterval, logger, activate,
+		metrics.ManifestReloadFailures.Inc)
+
 	server := &http.Server{
 		Handler: api.New(cfg, pool,
 			downstream.New(cfg.DownstreamBaseURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout),
-			telemetry.New(pool, cfg, logger),
+			manifests,
+			metrics,
 			logger,
 		).Routes(),
 	}
@@ -112,5 +124,21 @@ func serveUntilSignal(ctx context.Context, server *http.Server, listener net.Lis
 			return fmt.Errorf("shutdown: %w", err)
 		}
 		return nil
+	}
+}
+
+func activator(ctx context.Context, pool *pgxpool.Pool, metrics *telemetry.Metrics,
+	logger *slog.Logger) func(*manifest.Snapshot) {
+
+	principal := manifest.Principal()
+
+	return func(snapshot *manifest.Snapshot) {
+		metrics.ManifestInfo.Reset()
+		metrics.ManifestInfo.WithLabelValues(snapshot.Version()).Set(1)
+
+		if err := manifest.RecordActivation(ctx, pool, snapshot, principal); err != nil {
+			logger.Error("manifest activation not recorded; a later conflict verdict will be "+
+				"harder to explain", "version", snapshot.Version(), "error", err)
+		}
 	}
 }

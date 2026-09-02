@@ -95,7 +95,8 @@ func NewEmpty(t *testing.T) *pgxpool.Pool {
 func Truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	const stmt = `TRUNCATE idempotency_keys, write_intents, conflicts, payload_access_audit`
+	const stmt = `TRUNCATE idempotency_keys, write_intents, conflicts, payload_access_audit,
+		manifest_activations`
 	if _, err := pool.Exec(context.Background(), stmt); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -249,4 +250,32 @@ func randomSuffix(t *testing.T) string {
 		t.Fatalf("random suffix: %v", err)
 	}
 	return hex.EncodeToString(buf)
+}
+
+const pooledEnv = "IDEMIO_TEST_POOLED_ADDR"
+
+// The request path must survive transaction-mode pooling; the migration path must not run
+// through it at all (ADR-0013). Only the first is testable, so only the first is tested.
+func Pooled(t *testing.T, direct string) *pgxpool.Pool {
+	t.Helper()
+
+	addr := strings.TrimSpace(os.Getenv(pooledEnv))
+	if addr == "" {
+		t.Fatalf("%s is not set; start the stack with 'docker compose up -d' and export it. "+
+			"Pooled tests fail rather than skip: transaction-mode pooling is the deployment "+
+			"shape, and a suite that never exercises it proves nothing about it.", pooledEnv)
+	}
+
+	parsed, err := url.Parse(direct)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	parsed.Host = addr
+
+	pool, err := pgxpool.New(context.Background(), parsed.String())
+	if err != nil {
+		t.Fatalf("connect through the pooler: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
 }

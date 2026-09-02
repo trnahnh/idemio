@@ -17,8 +17,6 @@ function path(key: "p50" | "p99") {
     .join(" ");
 }
 
-// The knee between 600/s and 800/s is the point of the chart, so the budget lines are drawn
-// rather than described: you can see where the p99 crosses and the p50 does not.
 export function Curve() {
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-ink-900/60 p-4 sm:p-6">

@@ -9,8 +9,6 @@ type Props = {
   as?: "div" | "section" | "li" | "article";
 };
 
-// One observer per element rather than a library: the whole effect is a class flip once the
-// element has been seen, and it unobserves immediately so scrolling back up costs nothing.
 export function Reveal({ children, delay = 0, className = "", as = "div" }: Props) {
   const ref = useRef<HTMLElement | null>(null);
   const [shown, setShown] = useState(false);

@@ -49,7 +49,6 @@ body {
   color: #06070a;
 }
 
-/* A faint engineering grid. Two layers so it reads as paper rather than as a screen. */
 .grid-field {
   background-image:
     linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
@@ -79,8 +78,6 @@ body {
   );
 }
 
-/* Scroll reveal. Elements start displaced and settle; prefers-reduced-motion turns it off
-   rather than shortening it. */
 .reveal {
   opacity: 0;
   transform: translateY(18px);

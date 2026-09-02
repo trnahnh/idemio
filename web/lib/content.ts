@@ -16,8 +16,6 @@ export const stats = [
   { value: "18", label: "architecture decision records", note: "four of them supersede earlier ones" },
 ];
 
-// Measured with the open-loop harness: requests are issued on a fixed schedule rather than
-// by workers that wait, so a slow system cannot flatter its own percentiles.
 export const latency = [
   { rate: 150, p50: 9.8, p95: 11.2, p99: 13.8 },
   { rate: 400, p50: 11.3, p95: 13.4, p99: 16.4 },

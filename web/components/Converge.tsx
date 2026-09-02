@@ -1,7 +1,5 @@
 const LANES = 9;
 
-// Nine retries of the same logical write arrive; one line continues past the constraint.
-// The whole product in one figure, so it is drawn rather than described.
 export function Converge() {
   const height = 260;
   const gate = 0.56;

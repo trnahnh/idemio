@@ -12,9 +12,6 @@ type Attempt = {
 
 const KEY = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 
-// A faithful animation of what the suite asserts, not a call to a live backend: exactly one
-// racer receives 201, the rest replay the stored result with 200, and the downstream ledger
-// records a single execution. Turning the layer off is the same race with no constraint.
 export function Proof() {
   const [concurrency, setConcurrency] = useState(9);
   const [protectedRun, setProtectedRun] = useState(true);

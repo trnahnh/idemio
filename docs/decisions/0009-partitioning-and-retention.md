@@ -1,6 +1,6 @@
 # ADR-0009: Partition each table by what it must guarantee, not uniformly
 
-- **Status:** Accepted
+- **Status:** Accepted; the `pg_partman` clause is superseded by [ADR-0016](0016-partition-maintenance-in-application-code.md)
 - **Date:** 2026-09-01
 - **Phase:** 1
 

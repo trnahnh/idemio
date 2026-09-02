@@ -33,8 +33,8 @@ logs or database. Outstanding: latency at real volume, and an alerting drill. Se
 | Kill mid-call never re-executes; the reconciler resolves by probe | demonstrated |
 | A re-serialized retry replays rather than returning `422` | demonstrated |
 | A business failure replays identically | demonstrated |
-| p50 under 15ms and p99 under 60ms at real volume | outstanding |
-| `indeterminate` alerting live and fired in a drill | signal exported, drill outstanding |
+| p50 under 15ms and p99 under 60ms at real volume | floor measured (p50 4.1ms, p99 5.9ms); real volume outstanding |
+| `indeterminate` alerting live and fired in a drill | rules in `deploy/alerts.yml`; pager and drill outstanding |
 
 ## Running it
 

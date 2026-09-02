@@ -54,8 +54,11 @@ resolution. Validate this relation at startup and refuse to boot if it is violat
 
 **Operations**
 
-- [ ] `indeterminate` alert wired to a pager and fired once in a drill.
-- [ ] Stale-`pending` alert wired.
+- [ ] `indeterminate` alert wired to a pager and fired once in a drill. The rule is written
+      in `deploy/alerts.yml`; what remains is a pager and a rehearsal.
+- [ ] Stale-`pending` alert wired. The rule in `deploy/alerts.yml` compares the pending age
+      against `idemio_reconcile_stale_after_seconds` rather than a copied threshold, so it
+      cannot drift from the running configuration.
 - [ ] Manual resolution procedure written and walked through by someone who did not write
       it (see below).
 - [ ] Latency dashboard decomposed by the SYSTEM_DESIGN budget steps, so a regression can
@@ -66,7 +69,8 @@ resolution. Validate this relation at startup and refuse to boot if it is violat
 
 - [ ] `reconcile.stale_after > downstream.timeout_ms` by a stated margin.
 - [ ] `claim.pending_wait_ms < downstream.timeout_ms`.
-- [ ] Every `resource_type` in the manifest declares an error classification.
+- [ ] Every `resource_type` declares an error classification and a probe path. Enforced by
+      `resource.Validate()`; both binaries refuse to boot otherwise.
 - [ ] The live unique constraint matches the expected column list.
 
 ## Pre-deploy gates: Phase 1

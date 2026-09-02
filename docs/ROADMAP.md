@@ -10,7 +10,7 @@ are demonstrated. Each criterion below is written so that it can be answered yes
 
 | Phase | State |
 |---|---|
-| Phase 0 — core guarantee | **In progress.** Exit criteria 1–4 demonstrated against the fake downstream's execution ledger; 5 and 6 outstanding. |
+| Phase 0 — core guarantee | **In progress.** Criteria 1–4 demonstrated against the fake downstream's execution ledger. 5 measured at floor, not at volume. 6 has rules as code but no drill. Everything outstanding needs a deployment target, not code. |
 | Phase 1 — intent log and conflict detection | Not started |
 | Phase 2 — horizontal scale-out | Not started |
 | Phase 3 — full onboarding and abuse detection | Not started |
@@ -53,7 +53,13 @@ requiring a change to the write transaction.
    than returning `422`.
 4. A business failure from downstream replays identically on retry.
 5. p50 overhead under 15ms and p99 under 60ms at the Phase 0 write path's real volume.
+   *Floor measured on one machine at 300 sequential writes: p50 4.1ms, p99 5.9ms
+   (`go test -tags latency ./internal/api/`). That is the best case — no contention, no
+   network between tiers. It does not satisfy the criterion, but a failure here would have
+   ruled it out.*
 6. `indeterminate` alerting is live and has been fired at least once in a drill.
+   *Rules exist as code in `deploy/alerts.yml` and are tested to reference only metrics the
+   process really exports. Neither a pager nor a drill exists.*
 
 ## Phase 1 — intent log and conflict detection
 

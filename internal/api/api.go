@@ -67,6 +67,15 @@ func (s *Server) Routes() http.Handler {
 	return s.countResponses(mux)
 }
 
+// The pattern, not the path: a per-resource label would put caller-controlled cardinality
+// into a histogram.
+func route(r *http.Request) string {
+	if pattern := r.Pattern; pattern != "" {
+		return pattern
+	}
+	return "unmatched"
+}
+
 type recorder struct {
 	http.ResponseWriter
 	status int
@@ -84,8 +93,11 @@ func (s *Server) countResponses(next http.Handler) http.Handler {
 			return
 		}
 		recording := &recorder{ResponseWriter: w, status: http.StatusOK}
+		started := time.Now()
 		next.ServeHTTP(recording, r)
+
 		s.metrics.Responses.WithLabelValues(strconv.Itoa(recording.status)).Inc()
+		s.metrics.RequestDuration.WithLabelValues(route(r)).Observe(time.Since(started).Seconds())
 	})
 }
 

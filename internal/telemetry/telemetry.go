@@ -30,6 +30,7 @@ type Metrics struct {
 	Reconciled      *prometheus.CounterVec
 
 	DownstreamDuration *prometheus.HistogramVec
+	RequestDuration    *prometheus.HistogramVec
 	ReclaimAttempts    prometheus.Histogram
 
 	Conflicts          *prometheus.CounterVec
@@ -81,6 +82,9 @@ func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *Metrics {
 		"Stale pending keys resolved by the reconciler, by outcome.", "outcome")
 	m.DownstreamDuration = m.histogramVec("idemio_downstream_duration_seconds",
 		"Downstream call latency by disposition.", "disposition")
+	m.RequestDuration = m.histogramVec("idemio_request_duration_seconds",
+		"End-to-end request latency by route. Subtracting idemio_downstream_duration_seconds "+
+			"from this is the overhead the SYSTEM_DESIGN budget is written against.", "route")
 
 	m.Conflicts = m.counterVec("idemio_conflicts_total",
 		"Conflicting write pairs detected, by resolution. 'observed' is shadow mode, which "+

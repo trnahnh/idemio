@@ -80,6 +80,7 @@ to optimise something already safe is the wrong trade. See
 | Kafka / NATS | Long-horizon retention, replay, downstream analytics. Not a dependency of any request. |
 | Reconciler | Resolves stale `pending` keys, creates range partitions ahead of need, and runs the retention sweep and archive export. Has **no** downstream write path, structurally. |
 | Operation manifest | Versioned configuration, one file per `resource_type`, declaring operation classes, scope selectors, the conflict window, enforcement, the error classification and the probe path. Polled from disk and reloadable without a deploy; its activations are recorded. |
+| Object storage | Parquet archives of retired partitions, and result bodies over `limits.result_inline_bytes` ([ADR-0018](decisions/0018-offload-oversized-results.md)). Unusually for this design it *is* on the request path, for the subset of keys whose results were offloaded — a replay that cannot read one answers `500`, never anything from the not-executed family. Unconfigured, results are stored inline at any size and retired partitions are left attached. |
 | Downstream DB / API | The system of record the write is applied to. |
 
 The most consequential change from PRD §6: the intent log moved into Postgres
@@ -243,9 +244,17 @@ PRD §12: under 15ms p50 overhead, under 60ms p99. Indicative p50 allocation:
 
 The claim transaction is four round trips — lock, claim, intent, conflict check — which is
 why the timeout is set inside the lock statement rather than before it. Measured against
-this allocation on one machine, the whole path costs 8.4ms p50 with Postgres on localhost,
-so the budget has roughly 6ms of headroom for real network between the tiers. That headroom
-is the entire margin, and it is why a fifth round trip on this path needs an argument.
+this allocation on one machine, the whole path costs 8.4ms p50 sequentially with Postgres on
+localhost, so the budget has roughly 6ms of headroom for real network between the tiers. That
+headroom is the entire margin, and it is why a fifth round trip on this path needs an
+argument.
+
+Under concurrent open-loop load on the same machine the budget holds to roughly **600
+writes/sec** (p50 13.2ms, p99 33.3ms) and is exceeded by 800/s (p50 22.4ms, p99 109.3ms).
+[ROADMAP.md](ROADMAP.md) carries the full curve. Two things are worth reading from it: the
+p99 degrades far faster than the p50, which is the signature of queueing rather than of a
+slower path; and 600/s on one colocated machine is the context for the 2,000/sec per-region
+target, which is a scale-out problem rather than a per-request one.
 
 This budget only closes because no synchronous broker acknowledgement is on the path. A
 Kafka `acks=all` append alone commonly costs 5–15ms and would consume the entire budget by

@@ -9,6 +9,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    # Only services that need no command can be declared here: GitHub service containers
+    # accept an image, env and options, but never a command. Redpanda and MinIO both need
+    # one, so they are started as a step below.
     services:
       postgres:
         image: postgres:18
@@ -41,29 +44,6 @@ jobs:
         ports:
           - 6432:5432
 
-      redpanda:
-        image: redpandadata/redpanda:latest
-        ports:
-          - 9092:9092
-        options: >-
-          --health-cmd "rpk cluster health | grep -q 'Healthy:.*true'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: idemio
-          MINIO_ROOT_PASSWORD: idemio-secret
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
     env:
       IDEMIO_TEST_DATABASE_URL: postgres://idemio:idemio@localhost:5432/idemio
       IDEMIO_TEST_POOLED_ADDR: localhost:6432
@@ -79,6 +59,35 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Runners default fs.aio-max-nr below Redpanda's minimum, and it refuses to start
+      # rather than degrading, so raise it before the container is created.
+      - name: start redpanda and minio
+        run: |
+          sudo sysctl -w fs.aio-max-nr=1048576
+
+          docker run -d --name redpanda -p 9092:9092 redpandadata/redpanda:latest \
+            redpanda start --smp=1 --overprovisioned --node-id=0 --check=false \
+            --kafka-addr=PLAINTEXT://0.0.0.0:9092 \
+            --advertise-kafka-addr=PLAINTEXT://127.0.0.1:9092
+
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=idemio -e MINIO_ROOT_PASSWORD=idemio-secret \
+            minio/minio:latest server /data
+
+      - name: wait for redpanda and minio
+        run: |
+          for i in $(seq 1 60); do
+            docker exec redpanda rpk cluster health 2>/dev/null | grep -q 'Healthy:.*true' && break
+            sleep 2
+          done
+          docker exec redpanda rpk cluster health | grep -q 'Healthy:.*true'
+
+          for i in $(seq 1 60); do
+            curl -fs http://localhost:9000/minio/health/live >/dev/null && break
+            sleep 2
+          done
+          curl -fs http://localhost:9000/minio/health/live >/dev/null
+
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
@@ -91,3 +100,6 @@ jobs:
       # Phase 0 exit criterion 2. Kept out of the default run because it builds and kills a binary.
       - name: kill test
         run: go test -tags killtest ./internal/reconcile/ -run TestKillMidCall -count=1
+
+      - name: latency floor
+        run: go test -tags latency ./internal/api/ -count=1

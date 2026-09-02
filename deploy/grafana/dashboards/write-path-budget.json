@@ -1,0 +1,120 @@
+{
+  "uid": "idemio-write-path-budget",
+  "title": "idemio — write path latency budget",
+  "tags": ["idemio"],
+  "timezone": "utc",
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "text",
+      "title": "How to read this",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "SYSTEM_DESIGN budgets **p50 under 15ms and p99 under 60ms of overhead** — that is the request minus the downstream call, not the request total. The panels below decompose it so a regression can be attributed rather than merely noticed.\n\nOne honest gap: identity verification, canonicalization and the result store are not individually timed, so the *Unattributed* series below is everything the named panels do not account for. If a regression lands there, the next step is to time those steps rather than to guess."
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Overhead — request minus downstream (the budget)",
+      "description": "The quantity SYSTEM_DESIGN budgets. Thresholds mark 15ms and 60ms.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.015 },
+              { "color": "red", "value": 0.06 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50 overhead",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(idemio_request_duration_seconds_bucket{route=~\"POST /v1/writes\"}[5m]))) - histogram_quantile(0.50, sum by (le) (rate(idemio_downstream_duration_seconds_bucket[5m])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p99 overhead",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(idemio_request_duration_seconds_bucket{route=~\"POST /v1/writes\"}[5m]))) - histogram_quantile(0.99, sum by (le) (rate(idemio_downstream_duration_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Claim transaction — resource lock wait",
+      "description": "Budgeted at 6ms for the whole claim transaction; this is the share spent waiting for the per-resource advisory lock (ADR-0015). Also the ADR-0010 routing trigger at 50ms.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50 {{resource_type}}",
+          "expr": "histogram_quantile(0.50, sum by (le, resource_type) (rate(idemio_lock_wait_seconds_bucket[5m])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p99 {{resource_type}}",
+          "expr": "histogram_quantile(0.99, sum by (le, resource_type) (rate(idemio_lock_wait_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Downstream call — excluded from the budget",
+      "description": "Split by disposition so timeouts do not flatter the success percentiles.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p99 {{disposition}}",
+          "expr": "histogram_quantile(0.99, sum by (le, disposition) (rate(idemio_downstream_duration_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Unattributed — overhead the panels above do not explain",
+      "description": "Overhead minus lock wait. Identity verification, canonicalization, the intent insert and the result store all land here because none of them is individually timed. A regression that shows up only here is the signal to add a timer, not to guess.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p99 unattributed",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(idemio_request_duration_seconds_bucket{route=~\"POST /v1/writes\"}[5m]))) - histogram_quantile(0.99, sum by (le) (rate(idemio_downstream_duration_seconds_bucket[5m]))) - histogram_quantile(0.99, sum by (le) (rate(idemio_lock_wait_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput and outcomes",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (rate(idemio_writes_total[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Correctness debt — the panel that should stay at zero",
+      "description": "Every indeterminate key is a possible unresolved side effect requiring a human.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "targets": [
+        { "refId": "A", "legendFormat": "indeterminate keys", "expr": "idemio_indeterminate_keys" },
+        { "refId": "B", "legendFormat": "pending keys", "expr": "idemio_pending_keys" }
+      ]
+    }
+  ]
+}

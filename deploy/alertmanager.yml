@@ -1,0 +1,13 @@
+# Grouping is collapsed to near-zero because this configuration exists to be drilled. A real
+# deployment wants the defaults back: they are what stops one incident becoming forty pages.
+route:
+  receiver: sink
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+
+receivers:
+  - name: sink
+    webhook_configs:
+      - url: http://alertsink:9098/alerts
+        send_resolved: true

@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+# alerts.yml is the production ruleset. A drill writes alerts.drill.yml beside it, carrying
+# the same expressions with their `for:` durations collapsed, so a drill exercises the rule
+# that ships rather than a hand-maintained copy of it.
+rule_files:
+  - /etc/prometheus/alerts*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: idemio
+    static_configs:
+      - targets: ["idemio:8080"]
+
+  - job_name: reconciler
+    static_configs:
+      - targets: ["reconciler:9090"]

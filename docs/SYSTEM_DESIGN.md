@@ -99,41 +99,52 @@ a transaction. That is only possible if the intents are in Postgres.
   [2] Parse + validate; canonicalize (JCS); hash          -> 400 / 413 / 422
                   |
                   v
-  [3] Look up (agent_id, idempotency_key)
-                  |
-        +---------+---------+
-        | found             | not found
-        v                   v
-  [4] hash match?      [5] BEGIN
-        |                   |  advisory lock on resource   (ADR-0008)
-   no --+-> 422             |  INSERT key ON CONFLICT DO NOTHING
-        |                   |  INSERT intent
-      yes                   |  conflict check over window  (ADR-0007)
-        |                   |
-        v                   +-- conflict --> record conflict; status=rejected
-   status?                  |                COMMIT -> 409
-     done  -> 200 replay    |
-     pending -> 202 poll    +-- claim lost --> COMMIT; re-read -> 200/202/409/502
-     rejected -> 409        |
-     indeterminate -> 502   +-- clear ------> COMMIT (key is now pending)
-     failed -> re-claim [5]                       |
-                                                  v
-                                    [6] Execute downstream
-                                        (NO transaction, NO lock held)
-                                                  |
-                                                  v
-                                    [7] Classify outcome  (ADR-0005)
-                                        definitive -> done          -> 201
-                                        not executed -> failed      -> 503
-                                        indeterminate -> indeterminate -> 502
-                                                  |
-                                                  v
-                                    [8] Store result, set completed_at
+  [3] Resolve the operation in the manifest      (ADR-0013)
+        |
+   undeclared --> 422                             (ADR-0014)
+        |
+        v
+  [4] BEGIN                                       (ADR-0015)
+        |  advisory lock on resource, FIRST       (ADR-0008)
+        |     timed out --> ROLLBACK -> 503  (nothing was written)
+        |  INSERT key ON CONFLICT DO NOTHING
+        |     claim lost --> re-read in-tx:
+        |                      hash differs   -> 422
+        |                      done           -> 200 replay
+        |                      pending        -> 202 poll
+        |                      rejected       -> 409 (stored body, replayed verbatim)
+        |                      indeterminate  -> 502
+        |                      failed         -> re-claim, continue
+        |  INSERT intent
+        |  conflict check over live window        (ADR-0007)
+        |     other agent   --> record conflicts; void intent;
+        |                       status=rejected; COMMIT -> 409
+        |     same agent,
+        |       still pending --> ROLLBACK, wait for it, retry [4]
+        |     same agent,
+        |       terminal      --> record 'serialized'; continue
+        |     not enforcing   --> record 'observed'; continue
+        |     clear           --> continue
+        v
+      COMMIT  (key is now pending)
+        |
+        v
+  [5] Execute downstream
+      (NO transaction, NO lock held)
+        |
+        v
+  [6] Classify outcome                            (ADR-0005)
+      definitive    -> done          -> 201
+      not executed  -> failed        -> 503  (and void the intent)
+      indeterminate -> indeterminate -> 502
+        |
+        v
+  [7] Store result, set completed_at
 ```
 
 ### The transaction boundary is the design
 
-Step 5 commits **before** step 6 begins. This ordering is what makes the guarantee work,
+Step 4 commits **before** step 5 begins. This ordering is what makes the guarantee work,
 and both halves matter:
 
 - **Claim before execute.** If the claim committed after execution, a crash in between
@@ -208,6 +219,14 @@ behind the advisory lock, so per-resource throughput is bounded by one write per
 round trip. This does not affect the aggregate 2,000/sec target, but integrators must know
 it ([ADR-0008](decisions/0008-serialization-via-advisory-locks.md)).
 
+The ceiling is now measured rather than asserted. On one machine at 300 sequential writes,
+overhead is **p50 8.4ms** across distinct resources and **p50 14.9ms** when every write
+targets the same `resource_id` — the difference being lock contention plus a conflict window
+that is never empty. A hot resource costs roughly twice an ordinary one, which is the price
+of the guarantee rather than a defect, and it is why conflict recording is capped per write:
+pairing each incoming intent against every live one in the window is quadratic in the
+per-resource write rate.
+
 ## Latency budget
 
 PRD §12: under 15ms p50 overhead, under 60ms p99. Indicative p50 allocation:
@@ -220,6 +239,12 @@ PRD §12: under 15ms p50 overhead, under 60ms p99. Indicative p50 allocation:
 | Result store (update after execution) | 3ms |
 | Middleware overhead, serialization, network | 2ms |
 | **Total** | **~12ms** |
+
+The claim transaction is four round trips — lock, claim, intent, conflict check — which is
+why the timeout is set inside the lock statement rather than before it. Measured against
+this allocation on one machine, the whole path costs 8.4ms p50 with Postgres on localhost,
+so the budget has roughly 6ms of headroom for real network between the tiers. That headroom
+is the entire margin, and it is why a fifth round trip on this path needs an argument.
 
 This budget only closes because no synchronous broker acknowledgement is on the path. A
 Kafka `acks=all` append alone commonly costs 5–15ms and would consume the entire budget by

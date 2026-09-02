@@ -11,7 +11,15 @@ Every value that changes behaviour, with its default and the decision it comes f
 |---|---|---|---|
 | `claim.pending_wait_ms` | `0` | [ADR-0004](decisions/0004-concurrent-claim-resolution.md) | Bounded wait before returning `202`. Must never approach `downstream.timeout_ms`. |
 | `conflict.window` | `5s` | [ADR-0007](decisions/0007-operation-compatibility-matrix.md) | Overridable per `resource_type` in the manifest. |
-| `conflict.lock_timeout_ms` | `250` | [ADR-0008](decisions/0008-serialization-via-advisory-locks.md) | Set as the transaction `lock_timeout`. Exceeding it returns `202`, not an error. |
+| `conflict.lock_timeout_ms` | `250` | [ADR-0008](decisions/0008-serialization-via-advisory-locks.md), [ADR-0015](decisions/0015-conflict-check-transaction-shape.md) | Set as the transaction `lock_timeout`. The lock is the transaction's first statement, so exceeding it writes nothing and returns a retryable `503`. |
+| `conflict.enforce` | `false` | [ADR-0013](decisions/0013-phase-1-implementation-stack.md) | Declared per `resource_type` in the manifest. Off means detect and record, never reject. |
+| `manifest.dir` | — | ADR-0013 | Required. A process with no manifest can serve no write. |
+| `manifest.reload_interval` | `30s` | ADR-0013 | Directory content hash is polled at this interval. |
+| `read.max_span` | `31d` | [ADR-0017](decisions/0017-read-api-time-bounds-are-mandatory.md) | Widest range a single read endpoint call may cover. |
+| `partitions.ahead` | `8w` | [ADR-0016](decisions/0016-partition-maintenance-in-application-code.md) | Horizon the maintainer keeps covered. Must exceed the four weeks at which the headroom alert pages. |
+| `retention.rows_per_sec` | `500` | [ADR-0009](decisions/0009-partitioning-and-retention.md) | Key expiry rate. Must exceed ingest, or the hot table grows without bound. |
+| `relay.interval` | `1s` | [ADR-0001](decisions/0001-postgres-primary-intent-log.md) | Outbox poll period. |
+| `relay.batch` | `500` | ADR-0001 | Intents published per cycle. |
 | `reconcile.stale_after` | `5m` | [ADR-0006](decisions/0006-reconciliation-never-resumes.md) | **Must be comfortably greater than `downstream.timeout_ms`.** Setting it below turns healthy in-flight writes into `indeterminate`. |
 | `reconcile.interval` | `30s` | ADR-0006 | Reconciler sweep period. |
 | `downstream.connect_timeout_ms` | `1000` | [ADR-0005](decisions/0005-downstream-outcome-taxonomy.md) | Separate from the read timeout so "not executed" is provable. |
@@ -23,6 +31,12 @@ Every value that changes behaviour, with its default and the decision it comes f
 | `retention.conflicts_days` | `365` | ADR-0009 | Answers a PRD §18 open question. |
 | `partitions.keys_modulus` | `64` | ADR-0009 | **Immutable after first deploy** without a full table rewrite. |
 | `outbox.enabled` | `false` | [ADR-0001](decisions/0001-postgres-primary-intent-log.md) | Phase 1+. Enabling is configuration, not migration. |
+
+There is deliberately **no** `conflict.serialize_wait`. A same-agent conflict waits for
+another request's downstream call, so its bound is that call's budget and it is derived
+from `downstream.connect_timeout_ms + downstream.timeout_ms`. A separately configurable
+value could be set below the budget, which would turn every serialized write into a `503`
+without saying so ([ADR-0015](decisions/0015-conflict-check-transaction-shape.md)).
 
 **The most dangerous misconfiguration** is `reconcile.stale_after` set at or below
 `downstream.timeout_ms`. The reconciler would classify normal in-flight writes as stale,
@@ -70,25 +84,50 @@ resolution. Validate this relation at startup and refuse to boot if it is violat
 - [ ] `reconcile.stale_after > downstream.timeout_ms` by a stated margin.
 - [ ] `claim.pending_wait_ms < downstream.timeout_ms`.
 - [ ] Every `resource_type` declares an error classification and a probe path. Enforced by
-      `resource.Validate()`; both binaries refuse to boot otherwise.
+      manifest validation; every binary refuses to boot otherwise. A running process that
+      is handed an invalid manifest keeps serving the last valid one instead of exiting.
 - [ ] The live unique constraint matches the expected column list.
 
 ## Pre-deploy gates: Phase 1
 
-- [ ] Manifest schema validation in CI; an invalid manifest fails the build.
-- [ ] Compatible-write test passes — disjoint-scope `mutate`s and two `append`s both
-      succeed. Without this, the matrix is an expensive mutex.
-- [ ] `409`-rate-per-agent alert live **before** conflict detection is enabled, since a
-      bad manifest surfaces as mass rejection.
-- [ ] Manifest changes are audited and reviewable as code.
-- [ ] `pg_partman` configured with pre-creation headroom of at least 4 weeks, and the
-      headroom alert pages.
-- [ ] Key expiry sweep rate verified to exceed ingest rate under load.
-- [ ] Archive restore drill completed — a detached partition restored and queried.
-- [ ] Outbox relay lag alert live; Kafka outage drill shows zero write-path impact.
-- [ ] PgBouncer in transaction mode.
-- [ ] Redaction verified: `operator` cannot obtain payloads by any parameter combination.
-- [ ] `payload_access_audit` rows confirmed for every `investigator` read.
+Ticked boxes are demonstrated by the test suite against a real database, broker and object
+store. Unticked ones need a running deployment.
+
+- [x] Manifest validation runs in CI; an invalid manifest fails the build, and every
+      rejection shape is covered — a type not matching its file name, an unknown class, a
+      selector on a non-`mutate`, a zero window, a missing probe path, and a missing or
+      self-contradictory classification.
+- [x] Compatible-write test passes — disjoint-scope `mutate`s, two `append`s, and an
+      `append` beside a `mutate` all succeed. Without this, the matrix is an expensive mutex.
+- [x] Conflict-rate alert live **before** conflict detection is enabled, since a bad
+      manifest surfaces as mass rejection. `IdemioConflictRejectionsSpiking` pages, and
+      shadow mode makes the pre-enablement rate observable on real traffic.
+- [x] Manifest changes are reviewable as code, and each activation is recorded in
+      `manifest_activations` with its version, process and resource types.
+- [x] Partition pre-creation keeps at least 8 weeks of headroom, past the 4 weeks at which
+      `IdemioPartitionHeadroomLow` pages. Maintained in application code, not `pg_partman`
+      ([ADR-0016](decisions/0016-partition-maintenance-in-application-code.md)).
+- [x] Archive restore drill completed — a detached partition exported to Parquet, dropped,
+      restored and queried, with payloads and timestamps intact. A partition whose export
+      fails is left in place rather than dropped.
+- [x] Redaction verified: `operator` cannot obtain payloads by any parameter combination,
+      enforced by issuing a different query rather than by filtering results.
+- [x] `payload_access_audit` rows confirmed for every `investigator` read, committed in the
+      same transaction as the read so an unauditable read returns no payloads.
+- [x] Kafka outage shows zero write-path impact: with the broker unreachable, writes are
+      claimed, executed and recorded, and the backlog survives for the next cycle.
+- [x] PgBouncer in transaction mode, with the write path, replay, conflict detection,
+      concurrent claims and the read endpoints all exercised through it.
+- [ ] **Migrations run against Postgres directly, never through PgBouncer.** `store.Migrate`
+      holds a session-scoped advisory lock, which transaction-mode pooling silently breaks
+      under concurrency. This cannot be checked from the client: the pooler accepts session
+      statements and, on a quiet pool, hands back the same server, so everything appears to
+      work right up until it does not. Enforce it in deployment configuration
+      ([ADR-0013](decisions/0013-phase-1-implementation-stack.md)).
+- [ ] Key expiry sweep rate verified to exceed ingest rate **under load**. The sweep and its
+      lag gauge exist; the rate is a deployment measurement.
+- [ ] Outbox relay lag under one minute at steady state, over an hour of continuous traffic.
+      `IdemioRelayLagHigh` is wired; the measurement needs a running deployment.
 
 ## Pre-deploy gates: Phase 2
 
@@ -132,8 +171,12 @@ guess ([ADR-0006](decisions/0006-reconciliation-never-resumes.md)).
    incident.
 4. Confirm the downstream call carries a correlation id derived from the idempotency key.
    Without it, no probe is possible.
-5. Deploy in shadow first — the middleware records intents and claims keys but forwards to
-   the existing path — then cut over.
+5. Deploy with `enforce: false`. The conflict check runs in full and records
+   `resolution = 'observed'` rows against real traffic without rejecting anything. Read
+   `idemio_conflicts_total{resolution="observed"}` and `GET /v1/conflicts` over a period
+   that covers the path's real concurrency.
+6. Set `enforce: true` only once the observed rate is understood. This is a manifest field,
+   so both enabling it and rolling it back are hot reloads rather than deploys.
 
 ### Rolling back a manifest change
 

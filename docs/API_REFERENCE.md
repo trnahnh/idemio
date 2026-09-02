@@ -52,9 +52,9 @@ Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 |---|---|---|
 | `Idempotency-Key` header | yes | UUID. Client-generated, per PRD §9. Malformed or absent is `422`. |
 | `agent_id` | yes | Must equal the verified caller identity. |
-| `resource_type` | yes | Must have a registered manifest, or the write is treated as `replace` with no scope and conflicts with everything ([ADR-0007](decisions/0007-operation-compatibility-matrix.md)). |
+| `resource_type` | yes | Must have a manifest. An undeclared type is `422`, never admitted ([ADR-0014](decisions/0014-undeclared-operations-rejected-at-admission.md)). |
 | `resource_id` | yes | Opaque string. |
-| `operation` | yes | Must be declared in the manifest for `resource_type`. |
+| `operation` | yes | Must be declared in the manifest for `resource_type`. An undeclared operation is `422`. |
 | `payload` | yes | Arbitrary JSON object, subject to the constraints below. |
 
 ### Payload constraints
@@ -97,10 +97,12 @@ definitive outcome, it is stored, and it replays identically forever.
 **`200 OK` — replay of a completed write.** Identical body, `"replayed": true`.
 
 **`202 Accepted` — claimed, execution in flight.** Returned to the loser of a claim race
-([ADR-0004](decisions/0004-concurrent-claim-resolution.md)) and to a request whose
-serialization wait exceeded `conflict.lock_timeout_ms`
-([ADR-0008](decisions/0008-serialization-via-advisory-locks.md)). It is not a completion
-and carries no result.
+([ADR-0004](decisions/0004-concurrent-claim-resolution.md)). It is not a completion and
+carries no result.
+
+A lock or serialization timeout does **not** return `202`. The resource lock is taken
+before anything is written, so a timeout leaves no key to poll; those cases return `503`
+([ADR-0015](decisions/0015-conflict-check-transaction-shape.md)).
 
 ```http
 HTTP/1.1 202 Accepted
@@ -131,9 +133,21 @@ clamped to `[50ms, 5s]`.
 }
 ```
 
-Terminal. Retrying the same key returns the same `409`. Note that `conflicting_intent_id`
-and `conflict_id` are UUIDs; the PRD §8.3 example showed prefixed strings (`int_9981`,
-`cf_442`), which the schema in [DATA_MODEL.md](DATA_MODEL.md) does not use.
+Terminal. Retrying the same key returns the same `409`, byte for byte: the rejection body
+is stored on the key when it is rejected and replayed from there. Note that
+`conflicting_intent_id` and `conflict_id` are UUIDs; the PRD §8.3 example showed prefixed
+strings (`int_9981`, `cf_442`), which the schema in [DATA_MODEL.md](DATA_MODEL.md) does not
+use.
+
+Where several intents in the window conflict, one `conflicts` row is written per pair and
+the body names the most recent. `409` is returned only when the manifest declares
+`enforce`; until then the conflict is recorded with `resolution = 'observed'` and the write
+proceeds ([ADR-0013](decisions/0013-phase-1-implementation-stack.md)).
+
+A conflict between two writes from the **same** agent is never a `409`. The second write
+waits for the first to reach a terminal status and then proceeds, recording
+`resolution = 'serialized'`; if the wait expires the response is `503`
+([ADR-0015](decisions/0015-conflict-check-transaction-shape.md)).
 
 **`422 Unprocessable Entity` — request hash mismatch on a reused key.**
 
@@ -164,6 +178,15 @@ re-serializes its JSON differently will **not** trigger this. See
 
 The key is left in `failed`, which is the only re-claimable status. Retrying with the
 **same** key is correct and expected.
+
+Two further reasons carry `503`, and in both of them **no key row exists at all** because
+the resource lock is acquired before anything is written. Retrying the same key is a fresh
+claim, which is simpler still.
+
+| `reason` | Meaning |
+|---|---|
+| `resource_busy` | The wait for the resource lock exceeded `conflict.lock_timeout_ms` (default 250ms). |
+| `serialization_wait_expired` | A same-agent conflict waited for the earlier write to finish and ran out of budget. The bound is the downstream call budget. |
 
 **`502 Bad Gateway` — indeterminate outcome.**
 
@@ -219,14 +242,25 @@ Requires `operator` or `investigator`. **Payloads are redacted by default.**
 
 | Parameter | Required | Default | Notes |
 |---|---|---|---|
-| `since` | yes | — | RFC 3339. A bounded range is mandatory. |
-| `until` | no | `now()` | |
+| `since` | yes | — | RFC 3339. Absent is `400`; there is no default window ([ADR-0017](decisions/0017-read-api-time-bounds-are-mandatory.md)). |
+| `until` | no | `now()` | `until - since` may not exceed `read.max_span` (default 31 days), or `400`. |
 | `limit` | no | 100 | Max 1000. |
-| `include` | no | — | `payload` requires the `investigator` role; otherwise `403`. |
+| `cursor` | no | — | Opaque keyset cursor from `next_cursor`. Paging is by `(emitted_at, intent_id)`, so pages stay stable and cheap as new intents arrive. |
+| `include` | no | — | `payload` requires the `investigator` role, otherwise `403`, **and** an `X-Idemio-Reason` header, otherwise `400`. |
 
 The mandatory time bound exists for two reasons: it lets Postgres prune `write_intents`
 partitions ([ADR-0009](decisions/0009-partitioning-and-retention.md)), and it limits the
-blast radius of any single read. An unbounded default would do neither.
+blast radius of any single read. An unbounded default would do neither, and a *silent*
+default is worse than an error — the caller would believe they searched a period they did
+not.
+
+Responses carry `has_more`, and `next_cursor` when `has_more` is true.
+
+Intents carry `voided: true` when the write they record provably did not happen: rejected
+by conflict detection, or completed as `failed`. Those intents are excluded from the
+conflict window but are never deleted, because what an agent attempted is exactly what an
+incident responder needs to see
+([ADR-0015](decisions/0015-conflict-check-transaction-shape.md)).
 
 ```json
 {
@@ -256,8 +290,14 @@ Every request with `include=payload` writes a `payload_access_audit` row.
 
 Detected conflicts in a time window, for dashboards and alerting (PRD §8.4).
 
-Requires `operator` or `investigator`. Same mandatory `since`, same redaction rules.
-Additional filters: `agent_id`, `resource_type`, `resolution`.
+Requires `operator` or `investigator`. Same mandatory `since`, same maximum span, same
+cursor paging. Additional filters: `agent_id` (matches either side of the pair),
+`resource_type`, `resolution`.
+
+Conflict records hold no payload, so `include=payload` here is `400` rather than a silent
+no-op — read the intents endpoint for request bodies. Each record carries the
+`manifest_version` that produced the verdict, without which a conflict is unexplainable
+after the rules change ([ADR-0013](decisions/0013-phase-1-implementation-stack.md)).
 
 ```json
 {
@@ -294,10 +334,10 @@ Supersedes PRD §8.5. New codes are marked.
 | `404` **(new)** | Unknown key, or key belonging to another agent | — | no |
 | `409` | Conflict detected, write rejected | `rejected` | no, terminal |
 | `413` **(new)** | Payload exceeds `limits.payload_bytes` | — | no, fix the request |
-| `422` | Malformed idempotency key, hash mismatch, or non-representable number | `rejected` | no, client bug |
+| `422` | Malformed idempotency key, hash mismatch, non-representable number, or an operation no manifest declares | `rejected` | no, client bug or a missing manifest entry |
 | `429` **(reserved)** | Per-agent rate limit. Not implemented before Phase 3. | — | yes, after `Retry-After` |
 | `502` **(new)** | Indeterminate outcome; may or may not have executed | `indeterminate` | **no** |
-| `503` | Provably not executed; downstream unreachable | `failed` | **yes** |
+| `503` | Provably not executed: downstream unreachable, resource lock timeout, or serialization wait expired | `failed`, or no row at all | **yes** |
 
 ## Client retry rules
 
@@ -308,7 +348,7 @@ should implement this so individual agent authors never reason about it.
 |---|---|
 | `200` / `201` | Done. Read `result`. A business failure is a result, not an error. |
 | `202` | Poll `GET /v1/writes/{key}` after `Retry-After`. Never resubmit `POST`. |
-| `409` / `422` | Stop. Terminal. Escalate; do not generate a new key and retry blindly. |
+| `409` / `422` | Stop. Terminal. Escalate; do not generate a new key and retry blindly. A `409` means another agent is writing to the same resource, and a new key would collide identically. |
 | `503` | Retry with the **same** key, with backoff. This is the safe-retry path. |
 | `502` | **Stop.** The write may have landed. A human or a probe must resolve it. Generating a new key here is the double-write this system exists to prevent. |
 | `500` | Retry with the same key. The layer itself failed; the key is either unclaimed or `pending`, and both are safe. |

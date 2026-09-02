@@ -34,6 +34,9 @@ asserted in two places, that is a bug — delete one and link to the other.
 ## Reading order by role
 
 - **Implementing Phase 0** → SYSTEM_DESIGN §Write flow, DATA_MODEL, ADRs 0001–0006
+- **Implementing Phase 1** → ADR-0013 for the stack, then 0014–0017 for the four decisions
+  that supersede earlier ones. The manifest in `manifests/` is the artifact everything else
+  reads.
 - **Integrating an agent** → API_REFERENCE, then ADR-0003 (hashing) and ADR-0005 (retry semantics)
 - **Operating the tier** → DEPLOYMENT_CHECKLIST, METRICS, SYSTEM_DESIGN §Failure modes
 - **Reviewing the design** → PRD for intent, then decisions/ in order

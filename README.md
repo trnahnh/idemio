@@ -22,10 +22,11 @@ twice.
 
 ## Status
 
-**Phase 0 in progress.** The core guarantee is implemented and four of six exit criteria are
-demonstrated — against the fake downstream's own execution ledger, never against idemio's
-logs or database. Outstanding: latency at real volume, and an alerting drill. See
-[ROADMAP.md](docs/ROADMAP.md).
+**Phase 0 and Phase 1 in progress.** Every claim below is demonstrated against the fake
+downstream's own execution ledger, never against idemio's logs or database. What remains in
+both phases needs a running deployment, not more code. See [ROADMAP.md](docs/ROADMAP.md).
+
+Phase 0 — the core guarantee:
 
 | Exit criterion | State |
 |---|---|
@@ -33,8 +34,25 @@ logs or database. Outstanding: latency at real volume, and an alerting drill. Se
 | Kill mid-call never re-executes; the reconciler resolves by probe | demonstrated |
 | A re-serialized retry replays rather than returning `422` | demonstrated |
 | A business failure replays identically | demonstrated |
-| p50 under 15ms and p99 under 60ms at real volume | floor measured (p50 4.1ms, p99 5.9ms); real volume outstanding |
+| p50 under 15ms and p99 under 60ms at real volume | floor measured (p50 8.4ms, p99 10.6ms); real volume outstanding |
 | `indeterminate` alerting live and fired in a drill | rules in `deploy/alerts.yml`; pager and drill outstanding |
+
+Phase 1 — the intent log and conflict detection:
+
+| Exit criterion | State |
+|---|---|
+| Incompatible writes: one rejected with `409`, a conflict recorded | demonstrated |
+| Compatible writes both succeed — the matrix is not a per-resource mutex | demonstrated |
+| Same-agent conflicts serialize and complete | demonstrated against ledger timestamps |
+| Manifest reload without deploy, and recorded | demonstrated |
+| Relay lag under a minute; broker outage with zero write-path impact | outage half demonstrated; steady-state lag outstanding |
+| Archive restore drill | demonstrated end to end against object storage |
+| Payload redaction and audit verified | demonstrated |
+
+**Conflict detection ships off.** Each manifest declares `enforce`; until it is set, the
+check runs in full and records what it *would* have rejected without rejecting anything. A
+wrong manifest surfaces as mass rejection, so onboarding means watching real traffic first
+and then flipping one field.
 
 ## Running it
 
@@ -42,20 +60,32 @@ Requires Go 1.25+ and Docker.
 
 ```sh
 docker compose up -d
+
 export IDEMIO_TEST_DATABASE_URL=postgres://idemio:idemio@localhost:5433/idemio
+export IDEMIO_TEST_POOLED_ADDR=localhost:6433
+export IDEMIO_TEST_KAFKA_BROKERS=localhost:19092
+export IDEMIO_TEST_ARCHIVE_ENDPOINT=localhost:9000
+
 go test ./...
 go test -tags killtest ./internal/reconcile/ -run TestKillMidCall
+go test -tags latency ./internal/api/
 ```
 
-Tests **fail** rather than skip when the database is absent: a green run has to mean the
-guarantee was actually exercised.
+Tests **fail** rather than skip when a dependency is absent: a green run has to mean the
+guarantee was actually exercised. That applies to the broker and object store too — the
+outage and restore criteria are not provable against a stub.
 
-Three binaries: `cmd/idemio` (the API), `cmd/reconciler` (resolves stale claims, and links
-no code that can write downstream), and `cmd/fakedownstream` (a controllable downstream that
-keeps an independent execution ledger — the oracle every correctness test asserts against).
+Four binaries: `cmd/idemio` (the API), `cmd/reconciler` (resolves stale claims, maintains
+partitions, sweeps retention, and links no code that can write downstream), `cmd/relay`
+(publishes the outbox to Kafka, off the write path by construction), and
+`cmd/fakedownstream` (a controllable downstream that keeps an independent execution
+ledger — the oracle every correctness test asserts against).
+
 Configuration is environment-only and documented in
 [DEPLOYMENT_CHECKLIST](docs/DEPLOYMENT_CHECKLIST.md); the process refuses to boot on a
-configuration that would turn healthy writes into unresolvable ones.
+configuration that would turn healthy writes into unresolvable ones. Conflict semantics and
+error classification live in `manifests/`, one JSON file per `resource_type`, reloaded
+without a deploy.
 
 ## How it works
 
@@ -65,6 +95,12 @@ any downstream call is made.** Everything else is scaffolding around that senten
 
 Notably, the guarantee does **not** depend on consensus. There is no Raft group; Postgres
 is the coordination point, and the middleware tier stays stateless.
+
+Conflict detection rests on a second mechanism: a per-resource advisory lock taken as the
+claim transaction's **first** statement. Taking it any later lets two conflicting writers
+each observe the other and both lose, which would make contention an outage. Because the
+lock is transaction-scoped, it releases at commit and is never held across the downstream
+call.
 
 ## Documentation
 
@@ -77,6 +113,7 @@ Start at [`docs/`](docs/README.md).
 | [DATA_MODEL](docs/DATA_MODEL.md) | Schema, partitioning, retention |
 | [ROADMAP](docs/ROADMAP.md) | Phases and their exit criteria |
 | [DEPLOYMENT_CHECKLIST](docs/DEPLOYMENT_CHECKLIST.md) | Configuration and go-live gates |
+| [METRICS](docs/METRICS.md) | Every metric and the alert it carries |
 | [OPEN_QUESTIONS](docs/OPEN_QUESTIONS.md) | What is still undecided, and what would decide it |
 | [decisions/](docs/decisions/) | Why the design is the way it is |
 

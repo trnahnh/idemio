@@ -38,6 +38,7 @@ line to point at it.
 | [0010](0010-consistent-hash-routing-not-raft.md) | Key affinity uses consistent-hash routing; Raft is not adopted | Accepted |
 | [0011](0011-read-api-access-control.md) | Read APIs are role-scoped and redact payloads by default | Accepted; default-window clause superseded by 0017 |
 | [0017](0017-read-api-time-bounds-are-mandatory.md) | Read endpoints require an explicit `since` and cap the range span | Accepted |
+| [0018](0018-offload-oversized-results.md) | Oversized results go to object storage, degrading to inline rather than being lost | Accepted |
 
 ## Template
 

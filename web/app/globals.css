@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #06070a;
+  --color-ink-900: #0a0c10;
+  --color-ink-850: #0e1116;
+  --color-ink-800: #14181f;
+  --color-ink-700: #1c222b;
+
+  --color-line: rgba(255, 255, 255, 0.07);
+  --color-line-strong: rgba(255, 255, 255, 0.14);
+
+  --color-text: #eef0f2;
+  --color-muted: #98a1ac;
+  --color-dim: #5a636e;
+
+  --color-accent: #f2b53c;
+  --color-accent-dim: rgba(242, 181, 60, 0.14);
+  --color-ok: #4fd1a0;
+  --color-bad: #ff5f57;
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* {
+  border-color: var(--color-line);
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--color-ink-950);
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-text);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: #06070a;
+}
+
+/* A faint engineering grid. Two layers so it reads as paper rather than as a screen. */
+.grid-field {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+.grid-fade {
+  mask-image: radial-gradient(ellipse 85% 60% at 50% 0%, #000 25%, transparent 78%);
+}
+
+.glow {
+  background: radial-gradient(
+    ellipse 70% 55% at 50% -10%,
+    rgba(242, 181, 60, 0.13),
+    transparent 70%
+  );
+}
+
+.hairline {
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--color-line-strong) 18%,
+    var(--color-line-strong) 82%,
+    transparent
+  );
+}
+
+/* Scroll reveal. Elements start displaced and settle; prefers-reduced-motion turns it off
+   rather than shortening it. */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.75s var(--ease-out-expo),
+    transform 0.75s var(--ease-out-expo);
+}
+
+.reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .anim,
+  .anim * {
+    animation: none !important;
+  }
+}
+
+@keyframes travel {
+  0% {
+    stroke-dashoffset: 240;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.85;
+  }
+  70% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-blink {
+  animation: blink 1.9s ease-in-out infinite;
+}
+
+.marquee-track {
+  animation: drift 46s linear infinite;
+}
+
+@media (hover: hover) {
+  .marquee:hover .marquee-track {
+    animation-play-state: paused;
+  }
+}

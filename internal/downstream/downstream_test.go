@@ -212,3 +212,18 @@ func TestTheReplayHazardIsRealForAnIdempotencyKeyHeader(t *testing.T) {
 			"guard test above is not proving anything", got)
 	}
 }
+
+// Fail-safe: a resource type with no declared classification must not have its outcome
+// guessed from the status code, however healthy that status looks.
+func TestUnclassifiedResourceIsAlwaysIndeterminate(t *testing.T) {
+	fake := faketest.Start(t)
+
+	req := request()
+	req.ResourceType = "never_onboarded"
+
+	outcome := client(fake.DataURL, 3*time.Second).Execute(context.Background(), req)
+	if outcome.Disposition != downstream.Indeterminate {
+		t.Fatalf("disposition = %s, want indeterminate for an unclassified resource type",
+			outcome.Disposition)
+	}
+}

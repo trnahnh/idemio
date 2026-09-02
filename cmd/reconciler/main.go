@@ -15,6 +15,7 @@ import (
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/reconcile"
+	"github.com/trnahnh/idemio/internal/resource"
 	"github.com/trnahnh/idemio/internal/store"
 	"github.com/trnahnh/idemio/internal/telemetry"
 )
@@ -31,6 +32,9 @@ func run() error {
 
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if err := resource.Validate(); err != nil {
 		return err
 	}
 

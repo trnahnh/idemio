@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trnahnh/idemio/internal/correlation"
+	"github.com/trnahnh/idemio/internal/resource"
 )
 
 const CorrelationHeader = "X-Idemio-Correlation-Id"
@@ -108,7 +109,7 @@ func (c *Client) Execute(ctx context.Context, req Request) Outcome {
 	if err != nil {
 		return Outcome{Detail: fmt.Sprintf("read response after send: %v", err)}
 	}
-	return classifyResponse(resp.StatusCode, payload)
+	return classifyResponse(resource.ClassificationFor(req.ResourceType), resp.StatusCode, payload)
 }
 
 func classifyTransportError(err error) Outcome {
@@ -122,12 +123,16 @@ func classifyTransportError(err error) Outcome {
 	return Outcome{Detail: fmt.Sprintf("downstream_timeout_after_send: %v", err)}
 }
 
-func classifyResponse(status int, payload []byte) Outcome {
+func classifyResponse(classification resource.ErrorClassification, status int, payload []byte) Outcome {
 	switch {
-	case status >= 200 && status < 300:
+	case classification.IsDefinitive(status):
 		return Outcome{Disposition: Done, Result: asJSON(payload)}
-	case status >= 400 && status < 500:
-		return Outcome{Disposition: Done, Result: asJSON(payload)}
+	case classification.IsNotExecuted(status):
+		return Outcome{
+			Disposition: Failed,
+			Result:      asJSON(payload),
+			Detail:      fmt.Sprintf("downstream_declined_status_%d", status),
+		}
 	default:
 		return Outcome{
 			Result: asJSON(payload),

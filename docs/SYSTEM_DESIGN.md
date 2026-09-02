@@ -247,35 +247,25 @@ which is why [ADR-0011](decisions/0011-read-api-access-control.md) narrows PRD �
 ## Observability
 
 Supersedes PRD §15. Metrics are grouped by the decision each one informs, because a metric
-nobody acts on is not observability.
+nobody acts on is not observability. [METRICS.md](METRICS.md) owns the metric names, their
+labels, and the alert each one carries. This section owns why the groups exist and which of
+them is allowed to wake someone.
 
-**Correctness and safety**
+**Correctness and safety.** Whether the guarantee is holding, and whether any write has an
+outcome nobody knows. An `indeterminate` key is terminal and needs a human, so the correct
+standing value is zero and any sustained non-zero pages. Stale `pending` keys and probe
+failures are the leading indicators of the same failure, and they arrive together: a probe
+that cannot be reached leaves keys pending rather than escalating them.
 
-| Signal | Alert |
-|---|---|
-| `indeterminate` key count and age | **Any sustained non-zero value.** Correct target is zero; each one is a possible unresolved side effect. |
-| Stale `pending` older than `reconcile.stale_after` | Page. The reconciler is not keeping up. |
-| Probe failure rate per `resource_type` | Warn. Crash recovery for that path is degrading toward manual. |
-| Re-claims from `failed` per key (`attempt_count`) | Warn on a high tail; suggests a flapping downstream. |
+**Contract health.** Whether agents are using the contract correctly. These warn rather than
+page, because they describe someone else's bug: a `422` spike means an agent is reusing keys
+across different bodies, and a `409` spike after a manifest change usually means the manifest
+rather than the agents.
 
-**Contract health**
-
-| Signal | Alert |
-|---|---|
-| `422` rate per `agent_id` | Warn. Hash mismatches mean an agent is reusing keys across different bodies. |
-| `409` rate per `agent_id` and per `resource_type` | Warn above baseline (PRD §15). A spike after a manifest change usually means the manifest, not the agents. |
-| `202` rate | Informational, but a rising trend means growing contention. |
-| Replay rate | Informational. High replay is the system working. |
-
-**Capacity**
-
-| Signal | Alert |
-|---|---|
-| p99 advisory lock wait | Warn at 50ms — the ADR-0010 routing trigger. |
-| Claim collision rate (`ON CONFLICT DO NOTHING` no-ops) | Warn at 1% — the other routing trigger. |
-| Outbox relay lag | Warn. Does not affect the write path, but delays audit availability. |
-| `pg_partman` next-partition headroom | **Page.** A missing partition is a hard write-path outage. |
-| Key expiry sweep lag vs. ingest | Warn. If the sweep falls behind ingest, the hot table grows without bound. |
+**Capacity.** Whether the tier is running out of something. Two of these are the ADR-0010
+routing triggers, instrumented well before the decision they inform so that it can be read
+from data rather than argued. Partition headroom is the one capacity signal that pages, since
+a missing partition is a hard write-path outage rather than a degradation.
 
 **Dashboards.** Per-agent write volume, rejection rate, and replay rate; resource-level
 conflict hotspots; latency decomposed by the budget table above so a regression can be

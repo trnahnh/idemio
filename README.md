@@ -4,6 +4,8 @@
 
 An idempotent transaction layer for agent-driven writes.
 
+**[Overview and measured results →](https://idemio.vercel.app)**
+
 AI agents retry writes after timeouts and ambiguous responses, and multiple agents write
 concurrently to the same resources with no coordination. `idemio` sits between agents and
 the system of record and guarantees that a given logical write executes **at most once**,
@@ -130,6 +132,10 @@ Start at [`docs/`](docs/README.md).
 | [METRICS](docs/METRICS.md) | Every metric and the alert it carries |
 | [OPEN_QUESTIONS](docs/OPEN_QUESTIONS.md) | What is still undecided, and what would decide it |
 | [decisions/](docs/decisions/) | Why the design is the way it is |
+
+[`web/`](web/) holds the source of the overview page — a statically prerendered Next.js
+build with no backend, deployed from `main`. It restates nothing; the numbers on it are the
+ones in this README and in [ROADMAP](docs/ROADMAP.md).
 
 The original PRD is frozen and kept outside version control; `docs/` supersedes it. Review
 found several contradictions in it — the intent log was specified as both a Kafka topic and

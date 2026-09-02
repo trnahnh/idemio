@@ -40,8 +40,39 @@ type stubProber struct {
 	err     error
 }
 
-func (s stubProber) Probe(context.Context, string, string) (probe.Outcome, json.RawMessage, error) {
+func (s stubProber) Probe(context.Context, string, string, string) (probe.Outcome, json.RawMessage, error) {
 	return s.outcome, s.result, s.err
+}
+
+type pathRecordingProber struct{ paths []string }
+
+func (p *pathRecordingProber) Probe(_ context.Context, path, _, _ string) (probe.Outcome, json.RawMessage, error) {
+	p.paths = append(p.paths, path)
+	return probe.NotExecuted, nil, nil
+}
+
+// A probe path declared per resource_type and then ignored is worse than no declaration:
+// it reads as configured while every type is probed at the same address.
+func TestTheProbePathComesFromTheManifest(t *testing.T) {
+	manifests := fixtures.ManifestStore(t)
+
+	for _, resourceType := range []string{"invoice", "subscription"} {
+		pool := testdb.New(t)
+		claimPending(t, pool, resourceType)
+		backdate(t, pool, 2*staleAfter)
+
+		prober := &pathRecordingProber{}
+		_, err := reconcile.New(pool, prober, manifests, staleAfter, metricsFor(pool), quietLogger()).
+			Sweep(context.Background())
+		if err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+
+		definition, _ := manifests.Current().Lookup(resourceType)
+		if len(prober.paths) != 1 || prober.paths[0] != definition.ProbePath {
+			t.Fatalf("%s probed at %v, want [%s]", resourceType, prober.paths, definition.ProbePath)
+		}
+	}
 }
 
 func quietLogger() *slog.Logger {

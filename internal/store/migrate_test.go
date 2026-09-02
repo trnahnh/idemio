@@ -2,11 +2,15 @@ package store_test
 
 import (
 	"context"
+	"io/fs"
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/trnahnh/idemio/internal/store"
 	"github.com/trnahnh/idemio/internal/testdb"
+	"github.com/trnahnh/idemio/migrations"
 )
 
 func TestMigrateIsIdempotent(t *testing.T) {
@@ -17,12 +21,24 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 
+	assertAppliedOnce(t, pool)
+}
+
+func assertAppliedOnce(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+
+	files, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatalf("list migrations: %v", err)
+	}
+
 	var applied int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
+	if err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if applied != 1 {
-		t.Fatalf("schema_migrations rows = %d, want 1", applied)
+	if applied != len(files) {
+		t.Fatalf("schema_migrations rows = %d, want %d", applied, len(files))
 	}
 }
 
@@ -123,13 +139,7 @@ func TestConcurrentMigrationsOnAFreshDatabase(t *testing.T) {
 		}
 	}
 
-	var applied int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&applied); err != nil {
-		t.Fatalf("count schema_migrations: %v", err)
-	}
-	if applied != 1 {
-		t.Fatalf("schema_migrations rows = %d, want 1", applied)
-	}
+	assertAppliedOnce(t, pool)
 	if err := store.VerifyUniqueConstraint(ctx, pool); err != nil {
 		t.Fatalf("schema after concurrent migration: %v", err)
 	}

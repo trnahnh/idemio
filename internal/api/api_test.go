@@ -21,6 +21,8 @@ import (
 	"github.com/trnahnh/idemio/internal/correlation"
 	"github.com/trnahnh/idemio/internal/downstream"
 	"github.com/trnahnh/idemio/internal/faketest"
+	"github.com/trnahnh/idemio/internal/fixtures"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/telemetry"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
@@ -48,8 +50,24 @@ func newHarness(t *testing.T, downstreamTimeout time.Duration) *harness {
 func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) *harness {
 	t.Helper()
 
-	pool := testdb.New(t)
+	return build(t, testdb.New(t), downstreamTimeout, pendingWait)
+}
+
+// Conflict detection ships shadowed (ADR-0013), so a test that means to exercise rejection
+// has to say so.
+func newEnforcingHarness(t *testing.T) *harness {
+	t.Helper()
+
+	return build(t, testdb.New(t), 5*time.Second, 0, fixtures.Enforce)
+}
+
+func build(t *testing.T, pool *pgxpool.Pool, downstreamTimeout, pendingWait time.Duration,
+	patches ...fixtures.Patch) *harness {
+
+	t.Helper()
+
 	fake := faketest.Start(t)
+	manifestDir := fixtures.ManifestDir(t, patches...)
 
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeTrustedHeader,
@@ -62,12 +80,21 @@ func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) 
 		PayloadBytes:             1024,
 		ResultInlineBytes:        65536,
 		OutcomeWriteAttempts:     3,
+		ManifestDir:              manifestDir,
+		ManifestReloadInterval:   time.Hour,
+		ConflictLockTimeout:      5 * time.Second,
+		ReadMaxSpan:              31 * 24 * time.Hour,
+	}
+
+	manifests, err := manifest.NewStore(manifestDir)
+	if err != nil {
+		t.Fatalf("load manifests: %v", err)
 	}
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	client := downstream.New(fake.DataURL, cfg.DownstreamConnectTimeout, cfg.DownstreamTimeout)
 	metrics := telemetry.New(pool, cfg, logger)
-	server := httptest.NewServer(api.New(cfg, pool, client, metrics, logger).Routes())
+	server := httptest.NewServer(api.New(cfg, pool, client, manifests, metrics, logger).Routes())
 	t.Cleanup(server.Close)
 
 	return &harness{server: server, fake: fake, pool: pool}
@@ -76,8 +103,17 @@ func newHarnessWith(t *testing.T, downstreamTimeout, pendingWait time.Duration) 
 func (h *harness) write(t *testing.T, agent, key, payload string) *http.Response {
 	t.Helper()
 
-	body := `{"agent_id":"` + agent + `","resource_type":"invoice","resource_id":"` + resourceID +
-		`","operation":"create_charge","payload":` + payload + `}`
+	return h.writeOp(t, agent, key, "invoice", resourceID, "create_charge", payload)
+}
+
+func (h *harness) writeOp(t *testing.T, agent, key, resourceType, resource, operation,
+	payload string) *http.Response {
+
+	t.Helper()
+
+	body := `{"agent_id":"` + agent + `","resource_type":"` + resourceType +
+		`","resource_id":"` + resource + `","operation":"` + operation +
+		`","payload":` + payload + `}`
 
 	req, err := http.NewRequest(http.MethodPost, h.server.URL+"/v1/writes", strings.NewReader(body))
 	if err != nil {

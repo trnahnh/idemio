@@ -5,21 +5,25 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/trnahnh/idemio/internal/claim"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/testdb"
 )
 
 func request(key string) claim.Request {
 	return claim.Request{
-		AgentID:        "agent-checkout-flow",
-		Key:            key,
-		RequestHash:    "sha256-jcs-v1:abc",
-		ResourceType:   "invoice",
-		ResourceID:     "inv_8842",
-		Operation:      "create_charge",
-		OperationClass: "create",
-		Payload:        json.RawMessage(`{"amount_cents":4200}`),
+		AgentID:      "agent-checkout-flow",
+		Key:          key,
+		RequestHash:  "sha256-jcs-v1:abc",
+		ResourceType: "invoice",
+		ResourceID:   "inv_8842",
+		Operation:    "create_charge",
+		Declared:     manifest.Operation{Class: manifest.ClassCreate},
+		Payload:      json.RawMessage(`{"amount_cents":4200}`),
+		Window:       5 * time.Second,
+		LockTimeout:  5 * time.Second,
 	}
 }
 

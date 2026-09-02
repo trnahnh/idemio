@@ -18,6 +18,7 @@ import (
 	"github.com/trnahnh/idemio/internal/claim"
 	"github.com/trnahnh/idemio/internal/correlation"
 	"github.com/trnahnh/idemio/internal/faketest"
+	"github.com/trnahnh/idemio/internal/fixtures"
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/reconcile"
 	"github.com/trnahnh/idemio/internal/testdb"
@@ -28,7 +29,7 @@ func TestKillMidCallNeverProducesASecondExecution(t *testing.T) {
 	fake := faketest.Start(t)
 	fake.Script(t, resourceID, "hang")
 
-	address := startIdemio(t, databaseURL, fake.DataURL)
+	address := startIdemio(t, databaseURL, fake.DataURL, fixtures.ManifestDir(t))
 	correlationID := correlation.ID(agentID, keyA)
 
 	inFlight := make(chan struct{})
@@ -49,7 +50,7 @@ func TestKillMidCallNeverProducesASecondExecution(t *testing.T) {
 	}
 
 	prober := probe.New(fake.DataURL, 3*time.Second)
-	summary, err := reconcile.New(pool, prober, time.Millisecond, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), time.Millisecond, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestKillMidCallNeverProducesASecondExecution(t *testing.T) {
 
 var idemioProcess *exec.Cmd
 
-func startIdemio(t *testing.T, databaseURL, downstreamURL string) string {
+func startIdemio(t *testing.T, databaseURL, downstreamURL, manifestDir string) string {
 	t.Helper()
 
 	binary := filepath.Join(t.TempDir(), "idemio")
@@ -84,6 +85,7 @@ func startIdemio(t *testing.T, databaseURL, downstreamURL string) string {
 		"IDEMIO_DATABASE_URL="+databaseURL,
 		"IDEMIO_DOWNSTREAM_BASE_URL="+downstreamURL,
 		"IDEMIO_AUTH_MODE=trusted_header",
+		"IDEMIO_MANIFEST_DIR="+manifestDir,
 		"IDEMIO_LISTEN_ADDR=127.0.0.1:0",
 		"IDEMIO_DOWNSTREAM_CONNECT_TIMEOUT_MS=300",
 		"IDEMIO_DOWNSTREAM_TIMEOUT_MS=30000",

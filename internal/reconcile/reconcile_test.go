@@ -19,6 +19,8 @@ import (
 	"github.com/trnahnh/idemio/internal/config"
 	"github.com/trnahnh/idemio/internal/correlation"
 	"github.com/trnahnh/idemio/internal/faketest"
+	"github.com/trnahnh/idemio/internal/fixtures"
+	"github.com/trnahnh/idemio/internal/manifest"
 	"github.com/trnahnh/idemio/internal/probe"
 	"github.com/trnahnh/idemio/internal/reconcile"
 	"github.com/trnahnh/idemio/internal/telemetry"
@@ -57,14 +59,16 @@ func claimPending(t *testing.T, pool *pgxpool.Pool, resourceType string) {
 	t.Helper()
 
 	_, err := claim.Claim(context.Background(), pool, claim.Request{
-		AgentID:        agentID,
-		Key:            keyA,
-		RequestHash:    "sha256-jcs-v1:abc",
-		ResourceType:   resourceType,
-		ResourceID:     resourceID,
-		Operation:      "create_charge",
-		OperationClass: "create",
-		Payload:        json.RawMessage(`{"amount_cents":4200}`),
+		AgentID:      agentID,
+		Key:          keyA,
+		RequestHash:  "sha256-jcs-v1:abc",
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Operation:    "create_charge",
+		Declared:     manifest.Operation{Class: manifest.ClassCreate},
+		Payload:      json.RawMessage(`{"amount_cents":4200}`),
+		Window:       5 * time.Second,
+		LockTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("claim: %v", err)
@@ -97,7 +101,7 @@ func TestProbeFindingAnExecutionResolvesToDone(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.Executed, result: json.RawMessage(`{"sequence":1}`)}
-	summary, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -115,7 +119,7 @@ func TestProbeFindingNoExecutionResolvesToFailed(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.NotExecuted}
-	if _, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if got := statusOf(t, pool); got != claim.StatusFailed {
@@ -129,7 +133,7 @@ func TestUnknownProbeResultEscalatesToIndeterminate(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.Unknown}
-	if _, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if got := statusOf(t, pool); got != claim.StatusIndeterminate {
@@ -143,7 +147,7 @@ func TestUnprobeableResourceEscalatesToIndeterminate(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{outcome: probe.Executed}
-	if _, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 	if got := statusOf(t, pool); got != claim.StatusIndeterminate {
@@ -157,7 +161,7 @@ func TestUnreachableProbeLeavesTheKeyPending(t *testing.T) {
 	backdate(t, pool, 2*time.Hour)
 
 	prober := stubProber{err: errors.New("connection refused")}
-	summary, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -174,7 +178,7 @@ func TestFreshPendingKeysAreNotSwept(t *testing.T) {
 	claimPending(t, pool, "invoice")
 
 	prober := stubProber{outcome: probe.NotExecuted}
-	summary, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
+	summary, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background())
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -198,7 +202,7 @@ func TestSweepResolvesFromTheDownstreamLedgerWithoutReExecuting(t *testing.T) {
 	}
 
 	prober := probe.New(fake.DataURL, 3*time.Second)
-	if _, err := reconcile.New(pool, prober, staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
+	if _, err := reconcile.New(pool, prober, fixtures.ManifestStore(t), staleAfter, metricsFor(pool), quietLogger()).Sweep(context.Background()); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
 

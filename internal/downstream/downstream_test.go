@@ -14,6 +14,7 @@ import (
 
 	"github.com/trnahnh/idemio/internal/downstream"
 	"github.com/trnahnh/idemio/internal/faketest"
+	"github.com/trnahnh/idemio/internal/manifest"
 )
 
 const (
@@ -29,6 +30,9 @@ func request() downstream.Request {
 		ResourceID:   "inv_8842",
 		Operation:    "create_charge",
 		Payload:      json.RawMessage(`{"amount_cents":4200}`),
+		Classification: manifest.ErrorClassification{
+			Definitive: []manifest.StatusRange{{From: 200, To: 299}, {From: 400, To: 499}},
+		},
 	}
 }
 
@@ -220,6 +224,7 @@ func TestUnclassifiedResourceIsAlwaysIndeterminate(t *testing.T) {
 
 	req := request()
 	req.ResourceType = "never_onboarded"
+	req.Classification = manifest.ErrorClassification{}
 
 	outcome := client(fake.DataURL, 3*time.Second).Execute(context.Background(), req)
 	if outcome.Disposition != downstream.Indeterminate {

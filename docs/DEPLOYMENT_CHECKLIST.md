@@ -73,16 +73,21 @@ a running deployment, and every one of them is operational rather than code.
 
 **Operations**
 
-- [ ] `indeterminate` alert wired to a pager and fired once in a drill. The rule is written
-      in `deploy/alerts.yml` and tested to reference only metrics the process really
-      exports; what remains is a pager and a rehearsal.
-- [ ] Stale-`pending` alert wired. The rule in `deploy/alerts.yml` compares the pending age
-      against `idemio_reconcile_stale_after_seconds` rather than a copied threshold, so it
-      cannot drift from the running configuration. What remains is wiring it to a receiver.
+- [ ] `indeterminate` alert wired **to a pager**. The rule fires and reaches a receiver —
+      drilled end to end by `make drill` against the containerised binary — but the receiver
+      is a test sink. Point `deploy/alertmanager.yml` at a real one and the gate closes.
+- [x] Stale-`pending` alert wired. The rule compares the pending age against
+      `idemio_reconcile_stale_after_seconds` rather than a copied threshold, so it cannot
+      drift from the running configuration, and the drill asserts both sides of that
+      comparison are present — a missing side would silently never fire.
 - [ ] Manual resolution procedure written and walked through by someone who did not write
       it (see below).
-- [ ] Latency dashboard decomposed by the SYSTEM_DESIGN budget steps, so a regression can
-      be attributed.
+- [x] Latency dashboard decomposed by the SYSTEM_DESIGN budget steps, so a regression can
+      be attributed. `deploy/grafana/dashboards/write-path-budget.json`, provisioned on
+      startup, plotting overhead as request-minus-downstream against the 15ms and 60ms
+      thresholds, with lock wait broken out and the remainder shown as *unattributed* —
+      because identity verification, canonicalization and the result store are not
+      individually timed, and pretending otherwise would misattribute a regression.
 - [ ] Postgres HA configured with a synchronous replica and tested failover.
 
 **Startup validation** — the process refuses to boot if any fails:

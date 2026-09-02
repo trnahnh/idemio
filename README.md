@@ -37,7 +37,7 @@ Phase 0 — the core guarantee:
 | A re-serialized retry replays rather than returning `422` | demonstrated |
 | A business failure replays identically | demonstrated |
 | p50 under 15ms and p99 under 60ms at real volume | budget holds to ~600 writes/sec on one machine (p50 13.2ms, p99 33.3ms); real traffic outstanding |
-| `indeterminate` alerting live and fired in a drill | rules in `deploy/alerts.yml`; pager and drill outstanding |
+| `indeterminate` alerting live and fired in a drill | drilled end to end (`make drill`); a real pager instead of a test sink outstanding |
 
 Phase 1 — the intent log and conflict detection:
 
@@ -64,7 +64,11 @@ Requires Go 1.25+ and Docker.
 make up       # postgres, pgbouncer, redpanda and minio, waited on until healthy
 make verify   # gofmt, vet, the full suite, the kill test and the latency floor
 make load     # concurrent open-loop load; asserts exactly-once, reports the latency curve
+make observe  # the binaries plus prometheus, alertmanager and grafana (localhost:3000)
+make drill    # forces an indeterminate key and proves the alert reaches a receiver
 ```
+
+`make up` stays at four containers; `observe` and `drill` bring up the rest on demand.
 
 Or without `make`:
 

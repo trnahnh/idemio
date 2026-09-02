@@ -79,8 +79,22 @@ requiring a change to the write transaction.
    no longer an untested claim, and it puts Phase 2's 2,000/sec target in context: one
    machine with everything colocated does roughly 600.*
 6. `indeterminate` alerting is live and has been fired at least once in a drill.
-   *Rules exist as code in `deploy/alerts.yml` and are tested to reference only metrics the
-   process really exports. Neither a pager nor a drill exists.*
+   *Drilled (`make drill`). A hung downstream produces a genuine `indeterminate` key against
+   the containerised binary; Prometheus scrapes it, the rule evaluates, Alertmanager routes
+   it, and a receiver records the delivery — asserted on what arrived at the receiver, not on
+   what Prometheus computed, because a rule that evaluates but never reaches anyone pages
+   nobody.*
+
+   *The drill runs the production expressions with their `for:` durations collapsed, and the
+   overlay is generated from `deploy/alerts.yml` rather than maintained beside it, so the
+   expression under test is byte-for-byte the one that ships. Verified by breaking the
+   expression and watching the drill fail — which it did not, the first time: Alertmanager
+   keeps an alert active for minutes after Prometheus stops sending it, so a previous run's
+   notification satisfied the next one until each run was given its own alert names.*
+
+   *What is still outstanding is the last hop: the receiver is a test sink, not a pager, and
+   no human has been woken. Wiring PagerDuty or equivalent is configuration in
+   `deploy/alertmanager.yml`; everything upstream of it is now demonstrated.*
 
 ## Phase 1 — intent log and conflict detection
 

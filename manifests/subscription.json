@@ -1,0 +1,22 @@
+{
+  "resource_type": "subscription",
+  "conflict_window_ms": 2000,
+  "enforce": false,
+  "probe_path": "/probe",
+  "operations": {
+    "create_subscription": { "class": "create" },
+    "add_note": { "class": "append" },
+    "pause": { "class": "mutate", "scope": ["state"] },
+    "change_plan": { "class": "mutate", "scope": ["plan"] }
+  },
+  "errors": {
+    "definitive": [
+      { "from": 200, "to": 299 },
+      { "from": 400, "to": 428 }
+    ],
+    "not_executed": [
+      { "from": 429, "to": 429 },
+      { "from": 503, "to": 503 }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "resource_type": "invoice",
+  "conflict_window_ms": 5000,
+  "enforce": false,
+  "probe_path": "/probe",
+  "operations": {
+    "create_charge": { "class": "create" },
+    "add_line_item": { "class": "append" },
+    "update_status": { "class": "mutate", "scope": ["status"] },
+    "update_billing_address": { "class": "mutate", "scope": ["billing_address"] }
+  },
+  "errors": {
+    "definitive": [
+      { "from": 200, "to": 299 },
+      { "from": 400, "to": 499 }
+    ]
+  }
+}

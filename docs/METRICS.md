@@ -42,7 +42,10 @@ incremented, so a restart cannot lose them and two replicas cannot double-count.
 | `idemio_claim_collisions_total` | counter | — | Warn above 1% of writes — one of the two ADR-0010 routing triggers. Counts every claim that hit an existing row, however it was then resolved. | [ADR-0010](decisions/0010-consistent-hash-routing-not-raft.md) |
 | `idemio_partition_headroom_seconds` | gauge | `table` | **Page** below four weeks. A missing partition is a hard write-path outage, and `cmd/idemio` refuses to boot below two weeks. | [ADR-0009](decisions/0009-partitioning-and-retention.md) |
 | `idemio_downstream_duration_seconds` | histogram | `disposition` (`done`, `failed`, `indeterminate`) | Feeds the SYSTEM_DESIGN latency budget. Splitting by disposition keeps timeouts from flattering the success percentiles. | [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) |
-| `idemio_oversized_results_total` | counter | — | Informational in Phase 0. Phase 0 stores results inline regardless of size; this counts those over `limits.result_inline_bytes` so Phase 1 sets the cap from data rather than from the current guess. | [ADR-0012](decisions/0012-phase-0-implementation-stack.md) |
+| `idemio_oversized_results_total` | counter | — | Informational. Counts results over `limits.result_inline_bytes`, which are now offloaded to object storage rather than stored inline. | [ADR-0018](decisions/0018-offload-oversized-results.md) |
+| `idemio_results_offloaded_total` | counter | — | Informational. Results written to object storage. Should track `idemio_oversized_results_total` closely; a gap between them is the fallback below. | [ADR-0018](decisions/0018-offload-oversized-results.md) |
+| `idemio_offload_fallbacks_total` | counter | — | **Page** on any sustained value. Object storage refused a result and it was stored inline over the cap instead. Nothing is lost — that is the point — but it means storage is unhealthy *and* the row-width protection ADR-0009 depends on has silently stopped applying. | [ADR-0018](decisions/0018-offload-oversized-results.md) |
+| `idemio_result_fetch_failures_total` | counter | — | Warn. A replay could not read an offloaded result and answered `500`. The write completed and its outcome is recorded; only the body is unreadable, and retrying the same key is safe. | [ADR-0018](decisions/0018-offload-oversized-results.md) |
 
 ## Conflict detection
 

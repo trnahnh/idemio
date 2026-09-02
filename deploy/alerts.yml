@@ -197,3 +197,32 @@ groups:
             Headroom alone falls slowly and pages late. This fires while there is still time
             to act: the maintainer has created nothing in a week and the horizon is closing.
             IdemioPartitionHeadroomLow is the backstop, not the warning.
+
+  - name: idemio-results
+    rules:
+      - alert: IdemioOffloadFallbacks
+        expr: increase(idemio_offload_fallbacks_total[30m]) > 0
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Oversized results are being stored inline because object storage refused them"
+          description: >-
+            Nothing is lost: the cap is a performance guard and falling back to inline is the
+            designed degradation (ADR-0018). But it means object storage is unhealthy, and
+            that the row-width protection ADR-0009 relies on for the idempotency_keys
+            retention sweep has silently stopped applying. Fix storage before the sweep falls
+            behind.
+
+      - alert: IdemioResultFetchFailures
+        expr: rate(idemio_result_fetch_failures_total[15m]) > 0
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Replays cannot read offloaded results"
+          description: >-
+            These writes completed and their outcomes are recorded; only the stored bodies
+            are unreadable, and the response is a 500 that clients retry safely. Check object
+            storage reachability from the API replicas specifically, since the reconciler may
+            reach it while they do not.

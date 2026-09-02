@@ -25,12 +25,12 @@ Every value that changes behaviour, with its default and the decision it comes f
 | `downstream.connect_timeout_ms` | `1000` | [ADR-0005](decisions/0005-downstream-outcome-taxonomy.md) | Separate from the read timeout so "not executed" is provable. |
 | `downstream.timeout_ms` | `10000` | ADR-0005 | Response wait. Exceeding it yields `indeterminate`, never `failed`. |
 | `limits.payload_bytes` | `262144` | [ADR-0003](decisions/0003-canonical-request-hashing.md) | Bounds canonicalization cost on the p50 path. |
-| `limits.result_inline_bytes` | `65536` | [ADR-0009](decisions/0009-partitioning-and-retention.md) | Above this, results go to object storage via `result_ref`. |
+| `limits.result_inline_bytes` | `65536` | [ADR-0009](decisions/0009-partitioning-and-retention.md), [ADR-0018](decisions/0018-offload-oversized-results.md) | Above this, results go to object storage via `result_ref`. With no object storage configured, results are stored inline at any size. |
 | `retention.keys_days` | `90` | PRD §12 | Batched delete sweep. |
 | `retention.intents_days` | `90` | PRD §12 | Detach-and-archive. |
 | `retention.conflicts_days` | `365` | ADR-0009 | Answers a PRD §18 open question. |
 | `partitions.keys_modulus` | `64` | ADR-0009 | **Immutable after first deploy** without a full table rewrite. |
-| `outbox.enabled` | `false` | [ADR-0001](decisions/0001-postgres-primary-intent-log.md) | Phase 1+. Enabling is configuration, not migration. |
+| `archive.endpoint` / `archive.bucket` | — | [ADR-0009](decisions/0009-partitioning-and-retention.md), [ADR-0018](decisions/0018-offload-oversized-results.md) | Object storage for Parquet archives **and** offloaded results. Unset means partitions past retention are left attached and results are never offloaded. |
 
 There is deliberately **no** `conflict.serialize_wait`. A same-agent conflict waits for
 another request's downstream call, so its bound is that call's budget and it is derived

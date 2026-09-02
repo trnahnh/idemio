@@ -10,7 +10,7 @@ are demonstrated. Each criterion below is written so that it can be answered yes
 
 | Phase | State |
 |---|---|
-| Phase 0 — core guarantee | **In progress.** Criteria 1–4 demonstrated against the fake downstream's execution ledger. 5 measured at floor, not at volume. 6 has rules as code but no drill. Everything outstanding needs a deployment target, not code. |
+| Phase 0 — core guarantee | **In progress.** Criteria 1–4 demonstrated against the fake downstream's execution ledger. 5 measured under concurrent load: the budget holds to ~600 writes/sec on one machine, though not yet at real traffic. 6 has rules as code but no drill. Everything outstanding needs a deployment target, not code. |
 | Phase 1 — intent log and conflict detection | **In progress.** Criteria 1–4, 6 and 7 demonstrated; 5 demonstrated for the write-path half only. Conflict enforcement ships off by default. |
 | Phase 2 — horizontal scale-out | Not started |
 | Phase 3 — full onboarding and abuse detection | Not started |
@@ -53,14 +53,31 @@ requiring a change to the write transaction.
    than returning `422`.
 4. A business failure from downstream replays identically on retry.
 5. p50 overhead under 15ms and p99 under 60ms at the Phase 0 write path's real volume.
-   *Floor measured on one machine at 300 sequential writes
-   (`go test -tags latency ./internal/api/`). With Phase 1's conflict detection in the
-   path: p50 8.4ms, p99 10.6ms across distinct resources, and p50 14.9ms, p99 19.9ms when
-   every write targets one `resource_id`. Phase 0 measured 4.1ms / 5.9ms before the resource
-   lock and conflict window existed, so conflict detection roughly doubles the floor and a
-   hot resource doubles it again. That is the best case — no contention between clients, no
-   network between tiers. It does not satisfy the criterion, but a failure here would have
-   ruled it out.*
+   *Measured under concurrent open-loop load on one machine
+   (`go test -tags loadtest ./internal/api/`), 50 resources, all responses `201`:*
+
+   | Arrival rate | p50 | p95 | p99 |
+   |---|---|---|---|
+   | 150/s | 9.8ms | 11.2ms | 13.8ms |
+   | 400/s | 11.3ms | 13.4ms | 16.4ms |
+   | 600/s | 13.2ms | 18.3ms | 33.3ms |
+   | 800/s | 22.4ms | 86.7ms | 109.3ms |
+
+   *The budget holds to roughly **600 writes/sec** on a single machine with Postgres, the
+   pooler and the downstream all local, and is exceeded by 800/s. At every rate the fake's
+   ledger showed exactly one execution per key and no key left `pending`, which is the
+   assertion the harness enforces; the latencies are reported, not asserted, because they
+   are environment-dependent.*
+
+   *For reference, the sequential floor is p50 8.4ms / p99 10.6ms across distinct resources
+   and p50 14.9ms / p99 19.9ms on a single hot `resource_id`
+   (`go test -tags latency ./internal/api/`). Phase 0 measured 4.1ms / 5.9ms before the
+   resource lock and conflict window existed.*
+
+   *This still does not satisfy the criterion as written — "real volume" means real traffic
+   with a network between the tiers and a downstream that is not a local process — but it is
+   no longer an untested claim, and it puts Phase 2's 2,000/sec target in context: one
+   machine with everything colocated does roughly 600.*
 6. `indeterminate` alerting is live and has been fired at least once in a drill.
    *Rules exist as code in `deploy/alerts.yml` and are tested to reference only metrics the
    process really exports. Neither a pager nor a drill exists.*

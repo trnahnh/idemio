@@ -117,8 +117,11 @@ Location: /v1/writes/7c9e6679-7425-40de-944b-e07fc1f90ae7
 }
 ```
 
-`Retry-After` is computed from recent p95 downstream latency for the `resource_type`,
-clamped to `[50ms, 5s]`.
+`Retry-After` is the p95 of recent downstream latency for the `resource_type`, clamped to
+`[50ms, 5s]`, and defaults to one second before there is anything to measure. Only calls that
+reached the downstream feed that window: a refused connection returns in about a millisecond
+and would pull the advice toward the floor during an outage, telling every waiting client to
+poll hardest exactly when the downstream can least absorb it.
 
 **`409 Conflict` — rejected by conflict detection.**
 
@@ -187,6 +190,26 @@ claim, which is simpler still.
 |---|---|
 | `resource_busy` | The wait for the resource lock exceeded `conflict.lock_timeout_ms` (default 250ms). |
 | `serialization_wait_expired` | A same-agent conflict waited for the earlier write to finish and ran out of budget. The bound is the downstream call budget. |
+
+**`500 Internal Server Error` — the layer failed, and one specific case worth naming.**
+
+A result larger than `limits.result_inline_bytes` is stored in object storage
+([ADR-0018](decisions/0018-offload-oversized-results.md)). If it cannot be read back, the
+response is `500` with reason `result_unavailable`:
+
+```json
+{
+  "idempotency_key": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "status": "done",
+  "reason": "result_unavailable",
+  "retryable": true,
+  "detail": "The write completed and its outcome is recorded, but the stored result could not be read. Retrying the same key replays it and cannot re-execute."
+}
+```
+
+Deliberately **not** `503` or `502`. The key is terminal and the write definitely executed;
+`503` means *provably not executed* and `502` means the outcome is unknown, and both would be
+false. Retrying is unconditionally safe because a terminal key replays.
 
 **`502 Bad Gateway` — indeterminate outcome.**
 
@@ -354,7 +377,7 @@ should implement this so individual agent authors never reason about it.
 | `409` / `422` | Stop. Terminal. Escalate; do not generate a new key and retry blindly. A `409` means another agent is writing to the same resource, and a new key would collide identically. |
 | `503` | Retry with the **same** key, with backoff. This is the safe-retry path. |
 | `502` | **Stop.** The write may have landed. A human or a probe must resolve it. Generating a new key here is the double-write this system exists to prevent. |
-| `500` | Retry with the same key. The layer itself failed; the key is either unclaimed or `pending`, and both are safe. |
+| `500` | Retry with the same key. The layer itself failed; the key is unclaimed, `pending`, or terminal-but-unreadable, and all three are safe to retry. |
 
 ## Idempotency guarantees, stated precisely
 

@@ -45,34 +45,40 @@ resolution. Validate this relation at startup and refuse to boot if it is violat
 
 ## Pre-deploy gates: Phase 0
 
+Ticked boxes are demonstrated by the test suite against a real database. Unticked ones need
+a running deployment, and every one of them is operational rather than code.
+
 **Schema**
 
-- [ ] Tables created **partitioned** — hash for `idempotency_keys`, range for
+- [x] Tables created **partitioned** — hash for `idempotency_keys`, range for
       `write_intents` — even though Phase 0 volume does not require it. Retrofitting is
       the expensive path.
-- [ ] Unique constraint is exactly `(agent_id, idempotency_key)`, with no additional
+- [x] Unique constraint is exactly `(agent_id, idempotency_key)`, with no additional
       column. Verify in the live database, not in the migration file. This constraint is
       the guarantee.
-- [ ] `key_status` enum contains all five values including `failed` and `indeterminate`.
-- [ ] Postgres 18+ confirmed, or application-side UUIDv7 generation in place.
+- [x] `key_status` enum contains all five values including `failed` and `indeterminate`.
+- [x] Postgres 18+ confirmed, or application-side UUIDv7 generation in place.
 
 **Correctness**
 
-- [ ] Concurrent-duplicate load test passes, verified against **downstream records**.
-- [ ] Kill test passes: SIGKILL mid-downstream-call never produces a second execution.
-- [ ] Reconciler binary has no downstream mutation client linked in. Verify structurally,
+- [x] Concurrent-duplicate load test passes, verified against **downstream records**.
+      32 racers on one key produce exactly one winner, one intent, and one execution in
+      the fake's ledger.
+- [x] Kill test passes: SIGKILL mid-downstream-call never produces a second execution.
+- [x] Reconciler binary has no downstream mutation client linked in. Verify structurally,
       not by reading configuration.
-- [ ] Re-serialization test passes: reordered JSON keys and `4200.0` vs `4200` replay
+- [x] Re-serialization test passes: reordered JSON keys and `4200.0` vs `4200` replay
       rather than returning `422`.
-- [ ] Business-failure replay test passes.
+- [x] Business-failure replay test passes.
 
 **Operations**
 
 - [ ] `indeterminate` alert wired to a pager and fired once in a drill. The rule is written
-      in `deploy/alerts.yml`; what remains is a pager and a rehearsal.
+      in `deploy/alerts.yml` and tested to reference only metrics the process really
+      exports; what remains is a pager and a rehearsal.
 - [ ] Stale-`pending` alert wired. The rule in `deploy/alerts.yml` compares the pending age
       against `idemio_reconcile_stale_after_seconds` rather than a copied threshold, so it
-      cannot drift from the running configuration.
+      cannot drift from the running configuration. What remains is wiring it to a receiver.
 - [ ] Manual resolution procedure written and walked through by someone who did not write
       it (see below).
 - [ ] Latency dashboard decomposed by the SYSTEM_DESIGN budget steps, so a regression can
@@ -81,12 +87,12 @@ resolution. Validate this relation at startup and refuse to boot if it is violat
 
 **Startup validation** — the process refuses to boot if any fails:
 
-- [ ] `reconcile.stale_after > downstream.timeout_ms` by a stated margin.
-- [ ] `claim.pending_wait_ms < downstream.timeout_ms`.
-- [ ] Every `resource_type` declares an error classification and a probe path. Enforced by
+- [x] `reconcile.stale_after > downstream.timeout_ms` by a stated margin.
+- [x] `claim.pending_wait_ms < downstream.timeout_ms`.
+- [x] Every `resource_type` declares an error classification and a probe path. Enforced by
       manifest validation; every binary refuses to boot otherwise. A running process that
       is handed an invalid manifest keeps serving the last valid one instead of exiting.
-- [ ] The live unique constraint matches the expected column list.
+- [x] The live unique constraint matches the expected column list.
 
 ## Pre-deploy gates: Phase 1
 

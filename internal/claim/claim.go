@@ -117,7 +117,7 @@ const insertIntent = `
 	RETURNING intent_id::text, emitted_at`
 
 const selectWindow = `
-	SELECT intent_id::text, agent_id, idempotency_key::text, operation,
+	SELECT intent_id::text, agent_id, idempotency_key::text,
 	       operation_class::text, scope_selector
 	  FROM write_intents
 	 WHERE resource_type = $1
@@ -152,11 +152,10 @@ const voidIntent = `
 const lockNotAvailable = "55P03"
 
 type intent struct {
-	id        string
-	agentID   string
-	key       string
-	operation string
-	declared  manifest.Operation
+	id       string
+	agentID  string
+	key      string
+	declared manifest.Operation
 }
 
 func Claim(ctx context.Context, pool *pgxpool.Pool, req Request) (Result, error) {
@@ -357,7 +356,7 @@ func conflictingIntents(ctx context.Context, tx pgx.Tx, req Request, exclude str
 	for rows.Next() {
 		var candidate intent
 		if err := rows.Scan(&candidate.id, &candidate.agentID, &candidate.key,
-			&candidate.operation, &candidate.declared.Class, &candidate.declared.Scope); err != nil {
+			&candidate.declared.Class, &candidate.declared.Scope); err != nil {
 			return nil, fmt.Errorf("scan conflict window: %w", err)
 		}
 		if conflict.Compatible(req.Declared, candidate.declared) {

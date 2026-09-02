@@ -37,13 +37,6 @@ func (s *Snapshot) Operation(resourceType, operation string) (Operation, bool) {
 	return declared, ok
 }
 
-// An unregistered type yields the zero classification, under which every status is
-// indeterminate. ADR-0014 keeps such a write out of the claim path entirely, so this is a
-// second line rather than the first.
-func (s *Snapshot) Classification(resourceType string) ErrorClassification {
-	return s.byType[resourceType].Errors
-}
-
 func (s *Snapshot) Types() []string {
 	types := make([]string, 0, len(s.byType))
 	for name := range s.byType {

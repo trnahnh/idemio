@@ -13,7 +13,6 @@ import (
 // partition maintenance is exercised by the same suite as everything else.
 type Partitioned struct {
 	Name   string
-	Column string
 	Layout string
 	Days   int
 	Months int
@@ -28,9 +27,9 @@ func (p Partitioned) partitionName(lower time.Time) string {
 }
 
 var Tables = []Partitioned{
-	{Name: "write_intents", Column: "emitted_at", Layout: "20060102", Days: 7},
-	{Name: "conflicts", Column: "detected_at", Layout: "20060102", Days: 7},
-	{Name: "payload_access_audit", Column: "accessed_at", Layout: "200601", Months: 1},
+	{Name: "write_intents", Layout: "20060102", Days: 7},
+	{Name: "conflicts", Layout: "20060102", Days: 7},
+	{Name: "payload_access_audit", Layout: "200601", Months: 1},
 }
 
 const maintenanceLockKey int64 = 5470921883114002
